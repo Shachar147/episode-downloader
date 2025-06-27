@@ -9,6 +9,7 @@
     "webtorrent": "^2.6.8"
   },
   "scripts": {
-    "download:rick": "node episode_downloader.js --show 'Rick and Morty' --season 8 --episode 4 --out ~/Videos/ --min-seeds 25"
+    "download:rick": "node episode_downloader.js --show 'Rick and Morty' --season 8 --episode 4 --out ~/Videos/ --min-seeds 25",
+    "download:rick:eng": "node episode_downloader.js --show 'Rick and Morty' --season 8 --episode 1 --out ~/Videos/ --min-seeds 25"
   }
 }

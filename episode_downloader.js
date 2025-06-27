@@ -170,8 +170,6 @@ async function opensubsLogin() {
 }
 
 async function searchSubtitles(token, lang) {
-  // Use correct language code for Hebrew
-  if (lang === 'heb') lang = 'he';
   // Build query: show name (lowercase, + for spaces) and season number
   const showQuery = show.toLowerCase().replace(/\s+/g, '+');
   const query = `${showQuery}+season+${season}+episode+${episode}`;
@@ -318,7 +316,7 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
       await downloadSubtitle(subObj, subtitlePath, token);
     } else {
       console.log('Hebrew not found, trying English…');
-      subObj = await searchSubtitles(token, 'eng');
+      subObj = await searchSubtitles(token, 'en');
       if (!subObj) {
         console.log('No English subtitles found either.');
         throw new Error('No subtitles found');

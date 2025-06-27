@@ -26,7 +26,7 @@ This script simplifies the process of downloading TV series episodes, fetching H
    OS_API_USER=your_opensubtitles_username
    OS_API_PASS=your_opensubtitles_password
    OS_API_KEY=your_opensubtitles_api_key
-   OPENAI_API_KEY=your_openai_api_key # (optional, for translation)
+   OPENAI_API_KEY=your_openai_api_key # (for translation)
    ```
 
 ### 🔑 How to get your OpenSubtitles API Key
@@ -36,6 +36,16 @@ This script simplifies the process of downloading TV series episodes, fetching H
 4. Paste it as `OS_API_KEY` in your `.env` file
 
 > **Note:** You must use your OpenSubtitles **username** (not email) and password for `OS_API_USER` and `OS_API_PASS`.
+
+### 🤖 How to get your OpenAI API Key (for subtitle translation)
+1. Sign up or log in at [OpenAI Platform](https://platform.openai.com/signup)
+2. Go to your [API keys page](https://platform.openai.com/api-keys)
+3. Click **"Create new secret key"** and copy the key
+4. Add it to your `.env` file as:
+   ```env
+   OPENAI_API_KEY=sk-...
+   ```
+5. **Free credits:** New accounts get some free credits, but usage is not unlimited. See [OpenAI Pricing](https://openai.com/pricing) for details.
 
 ## 📝 Usage
 
