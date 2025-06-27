@@ -28,7 +28,14 @@ const { program } = require('commander');
 
 dotenv.config();
 
+// uncomment if there are login problems to verify script managed to read your credentials
+// console.log('OS_API_USER:', process.env.OS_API_USER, 'OS_API_PASS:', process.env.OS_API_PASS);
+
 const execAsync = promisify(exec);
+
+const { OS_API_KEY } = process.env;
+const OPEN_SUBTITLES_API_KEY = OS_API_KEY || 'rlF1xGalT47V4qYxdgSLR2GFTO3Cool8';
+const OPEN_SUBTITLES_USER_AGENT = 'MyDownloader/1.0';
 
 // --------------------------- CLI Arguments ----------------------------------
 program
@@ -56,9 +63,19 @@ function similarity(a, b) {
 
 function scoreTorrent(torrent, searchQuery) {
   const title = torrent.name;
-  const sim = similarity(title, searchQuery);
-  // Use similarity as main score, seeders as tiebreaker
-  return sim * 1000 + parseInt(torrent.seeders || 0) / 1000;
+  // --- Similarity logic (commented out for now) ---
+  // const sim = similarity(title, searchQuery);
+  // return sim * 1000 + parseInt(torrent.seeders || 0) / 1000;
+
+  // --- Quality preference ---
+  let qualityScore = 0;
+  if (/1080p/i.test(title)) qualityScore = 3;
+  else if (/720p/i.test(title)) qualityScore = 2;
+  else if (/480p/i.test(title)) qualityScore = 1;
+  // You can add more quality tiers if needed
+
+  // Use quality as main score, seeders as tiebreaker
+  return qualityScore * 1000 + parseInt(torrent.seeders || 0) / 1000;
 }
 
 function pirateBaySearchUrl(query) {
@@ -138,7 +155,8 @@ async function opensubsLogin() {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Api-Key': 'temporary_key' // replace with your OpenSubtitles API key if you have one
+      'Api-Key': OPEN_SUBTITLES_API_KEY,
+      'User-Agent': OPEN_SUBTITLES_USER_AGENT
     },
     body: JSON.stringify({ username: OS_API_USER, password: OS_API_PASS })
   });
@@ -152,7 +170,8 @@ async function searchSubtitles(token, lang) {
   const url = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(query)}&languages=${lang}`;
   const res = await fetch(url, {
     headers: {
-      'Api-Key': 'temporary_key',
+      'Api-Key': OPEN_SUBTITLES_API_KEY,
+      'User-Agent': OPEN_SUBTITLES_USER_AGENT,
       Authorization: `Bearer ${token}`
     }
   });
