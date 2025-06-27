@@ -25,6 +25,10 @@ const dotenv = require('dotenv');
 const { OpenAI } = require('openai');
 const { program } = require('commander');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+let chalk;
+(async () => {
+  chalk = (await import('chalk')).default;
+})();
 
 dotenv.config();
 
@@ -184,11 +188,12 @@ async function searchSubtitles(token, lang) {
   if (data.data && data.data.length > 0) {
     const sub = data.data[0];
     const fileId = sub.attributes.files?.[0]?.file_id;
+    const fileName = sub.attributes.files?.[0]?.file_name || undefined;
     if (!fileId) {
       console.log('[OpenSubtitles] No file_id found in subtitle attributes.');
       return null;
     }
-    return { fileId };
+    return { fileId, fileName, release: sub.attributes.release };
   }
   console.log(`[OpenSubtitles] No subtitles found for query: ${query} (${lang})`);
   return null;
@@ -247,10 +252,49 @@ async function translateSRTtoHebrew(srcPath, destPath) {
 
 // --------------------------- FFmpeg Mux ------------------------------------
 async function muxSubtitles(videoPath, srtPath, outputPath) {
+  // Get video duration first
+  const getDurationCmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`;
+  let totalSeconds = 0;
+  try {
+    const { stdout } = await execAsync(getDurationCmd);
+    totalSeconds = parseFloat(stdout.trim());
+  } catch (e) {
+    console.warn('Could not determine video duration for progress calculation.');
+  }
   const cmd = `ffmpeg -y -i "${videoPath}" -vf subtitles='${srtPath.replace(/'/g, "'\\''")}' -c:v libx264 -c:a copy "${outputPath}"`;
-  console.log('Running ffmpeg…');
-  await execAsync(cmd);
-  console.log('Muxing complete →', outputPath);
+  console.log('Merging video and subtitles using ffmpeg…');
+  return new Promise((resolve, reject) => {
+    const proc = exec(cmd);
+    let startTime = Date.now();
+    let lastPercent = 0;
+    proc.stderr?.on('data', data => {
+      const line = data.toString();
+      // Parse time= from ffmpeg output
+      const timeMatch = line.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+      if (timeMatch && totalSeconds > 0) {
+        const hours = parseInt(timeMatch[1], 10);
+        const minutes = parseInt(timeMatch[2], 10);
+        const seconds = parseFloat(timeMatch[3]);
+        const currentSeconds = hours * 3600 + minutes * 60 + seconds;
+        const percent = ((currentSeconds / totalSeconds) * 100).toFixed(2);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        const eta = ((totalSeconds - currentSeconds) / (currentSeconds / (elapsed || 1))).toFixed(1);
+        if (percent !== lastPercent) {
+          process.stdout.write(`\rProgress: ${percent}% | Elapsed: ${elapsed}s | ETA: ${eta}s   `);
+          lastPercent = percent;
+        }
+      }
+    });
+    proc.on('close', code => {
+      process.stdout.write('\n');
+      if (code === 0) {
+        console.log('Muxing complete →', outputPath);
+        resolve();
+      } else {
+        reject(new Error(`ffmpeg exited with code ${code}`));
+      }
+    });
+  });
 }
 
 // --------------------------- Main Workflow ---------------------------------
@@ -267,10 +311,10 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
     // 2. Subtitles
     const token = await opensubsLogin();
     let subObj = await searchSubtitles(token, 'he');
-    let subtitlePath = path.join(outputDir, `${EP_CODE}.srt`);
+    let subtitlePath = path.join(outputDir, subObj ? subObj.fileName : `${EP_CODE}.srt`);
 
     if (subObj) {
-      console.log('Hebrew subtitles found', subObj);
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`Hebrew subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
       await downloadSubtitle(subObj, subtitlePath, token);
     } else {
       console.log('Hebrew not found, trying English…');
@@ -279,7 +323,8 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
         console.log('No English subtitles found either.');
         throw new Error('No subtitles found');
       }
-      const engPath = path.join(outputDir, `${EP_CODE}.eng.srt`);
+      const engPath = path.join(outputDir, subObj.fileName || `${EP_CODE}.eng.srt`);
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`English subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
       await downloadSubtitle(subObj, engPath, token);
       console.log('Translating subtitles…');
       await translateSRTtoHebrew(engPath, subtitlePath);

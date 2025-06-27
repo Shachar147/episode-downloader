@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "chalk": "^5.4.1",
     "cheerio": "^1.1.0",
     "commander": "^13.1.0",
     "dotenv": "^16.6.0",
