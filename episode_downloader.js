@@ -13,8 +13,7 @@
  *      OS_API_USER & OS_API_PASS – OpenSubtitles credentials (free account)
  *
  * Usage:
- *   node episode_downloader.js --show "Rick and Morty" --season 8 --episode 5 \
- *       --out /path/to/output
+ *   node episode_downloader.js --show "Rick and Morty" --season 8 --episode 5 --out /path/to/output
  */
 const fs = require('node:fs/promises');
 const { existsSync } = require('node:fs');
@@ -25,6 +24,7 @@ const cheerio = require('cheerio');
 const dotenv = require('dotenv');
 const { OpenAI } = require('openai');
 const { program } = require('commander');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
 
 dotenv.config();
 
@@ -166,8 +166,13 @@ async function opensubsLogin() {
 }
 
 async function searchSubtitles(token, lang) {
-  const query = `${show} ${season}x${String(episode).padStart(2, '0')}`;
+  // Use correct language code for Hebrew
+  if (lang === 'heb') lang = 'he';
+  // Build query: show name (lowercase, + for spaces) and season number
+  const showQuery = show.toLowerCase().replace(/\s+/g, '+');
+  const query = `${showQuery}+season+${season}+episode+${episode}`;
   const url = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(query)}&languages=${lang}`;
+  console.log(`[OpenSubtitles] Searching by query: ${url}`);
   const res = await fetch(url, {
     headers: {
       'Api-Key': OPEN_SUBTITLES_API_KEY,
@@ -176,13 +181,51 @@ async function searchSubtitles(token, lang) {
     }
   });
   const data = await res.json();
-  return data.data?.[0]?.attributes?.url || null;
+  if (data.data && data.data.length > 0) {
+    const sub = data.data[0];
+    const fileId = sub.attributes.files?.[0]?.file_id;
+    if (!fileId) {
+      console.log('[OpenSubtitles] No file_id found in subtitle attributes.');
+      return null;
+    }
+    return { fileId };
+  }
+  console.log(`[OpenSubtitles] No subtitles found for query: ${query} (${lang})`);
+  return null;
 }
 
-async function downloadSubtitle(url, dest) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('Subtitle download failed');
-  const buffer = await res.arrayBuffer();
+async function downloadSubtitle(subObj, dest, token) {
+  if (!subObj || !subObj.fileId) throw new Error('No file_id for subtitle download');
+  // Use the /download endpoint
+  const downloadUrl = 'https://api.opensubtitles.com/api/v1/download';
+  const res = await fetch(downloadUrl, {
+    method: 'POST',
+    headers: {
+      'Api-Key': OPEN_SUBTITLES_API_KEY,
+      'User-Agent': OPEN_SUBTITLES_USER_AGENT,
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ file_id: subObj.fileId })
+  });
+  const data = await res.json();
+  if (!data.link) {
+    console.error('[Subtitle Download] No direct link returned from /download endpoint:', data);
+    throw new Error('Subtitle download failed');
+  }
+  // Now fetch the actual SRT file
+  const srtRes = await fetch(data.link);
+  if (!srtRes.ok) {
+    console.error(`[Subtitle Download] Failed to download subtitle. Status: ${srtRes.status} ${srtRes.statusText}`);
+    try {
+      const text = await srtRes.text();
+      console.error(`[Subtitle Download] Response body (snippet):`, text.slice(0, 500));
+    } catch (e) {
+      console.error(`[Subtitle Download] Could not read response body.`);
+    }
+    throw new Error('Subtitle download failed');
+  }
+  const buffer = await srtRes.arrayBuffer();
   await fs.writeFile(dest, Buffer.from(buffer));
 }
 
@@ -223,18 +266,21 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
 
     // 2. Subtitles
     const token = await opensubsLogin();
-    let subUrl = await searchSubtitles(token, 'heb');
+    let subObj = await searchSubtitles(token, 'he');
     let subtitlePath = path.join(outputDir, `${EP_CODE}.srt`);
 
-    if (subUrl) {
-      console.log('Hebrew subtitles found');
-      await downloadSubtitle(subUrl, subtitlePath);
+    if (subObj) {
+      console.log('Hebrew subtitles found', subObj);
+      await downloadSubtitle(subObj, subtitlePath, token);
     } else {
       console.log('Hebrew not found, trying English…');
-      subUrl = await searchSubtitles(token, 'eng');
-      if (!subUrl) throw new Error('No subtitles found');
+      subObj = await searchSubtitles(token, 'eng');
+      if (!subObj) {
+        console.log('No English subtitles found either.');
+        throw new Error('No subtitles found');
+      }
       const engPath = path.join(outputDir, `${EP_CODE}.eng.srt`);
-      await downloadSubtitle(subUrl, engPath);
+      await downloadSubtitle(subObj, engPath, token);
       console.log('Translating subtitles…');
       await translateSRTtoHebrew(engPath, subtitlePath);
     }
