@@ -377,6 +377,8 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
 
 // --------------------------- Main Workflow ---------------------------------
 (async () => {
+  const episodeName = `${show} ${EP_CODE}`;
+
   try {
     // Wait for WhatsApp client to be ready before starting
     console.log('Initializing WhatsApp client...');
@@ -386,7 +388,6 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
     if (!existsSync(outputDir)) await fs.mkdir(outputDir, { recursive: true });
 
     // Create episode-specific folder
-    const episodeName = `${show} ${EP_CODE}`;
     const episodeFolder = path.join(outputDir, episodeName);
     if (!existsSync(episodeFolder)) await fs.mkdir(episodeFolder, { recursive: true });
     console.log((chalk && chalk.green ? chalk.green : x => x)(`Created episode folder: ${episodeFolder}`));
