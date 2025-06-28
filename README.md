@@ -82,9 +82,8 @@ Enjoy your automated TV experience! 🍿
 
 If you set `MY_WHATSAPP_NUMBER` in your `.env`, the script will send you real-time updates about the download and processing steps via WhatsApp (using WhatsApp Web). 
 
-**Important:** The WhatsApp client is now integrated directly into the main script. You do NOT need to run `whatsappNotifier.js` separately.
-
-On first run, you'll need to scan a QR code in your terminal to connect your WhatsApp account. The script will wait for the WhatsApp client to be ready before proceeding with the download.
+On first run, you'll need to scan a QR code in your terminal to connect your WhatsApp account. 
+The script will wait for the WhatsApp client to be ready before proceeding with the download.
 
 **Example notifications:**
 - Started search for episode

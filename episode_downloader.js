@@ -390,16 +390,14 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
     const episodeFolder = path.join(outputDir, episodeName);
     if (!existsSync(episodeFolder)) await fs.mkdir(episodeFolder, { recursive: true });
     console.log((chalk && chalk.green ? chalk.green : x => x)(`Created episode folder: ${episodeFolder}`));
-    await sendWhatsAppMessage(MY_NUMBER, `Started search for: ${show} ${EP_CODE}`);
 
     // 1. Torrent search & download
-    await sendWhatsAppMessage(MY_NUMBER, `Searching for torrent for: ${show} ${EP_CODE}`);
+    await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSearching torrent...`);
     const magnet = await findMagnet();
     console.log((chalk && chalk.green ? chalk.green : x => x)(`Magnet link found`));
-    await sendWhatsAppMessage(MY_NUMBER, `Magnet link found for: ${show} ${EP_CODE}`);
-    await sendWhatsAppMessage(MY_NUMBER, `Starting torrent download for: ${show} ${EP_CODE}`);
+    await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\n*Magnet link found!* Starting torrent download...`);
     const videoPath = await downloadTorrent(magnet, episodeFolder);
-    await sendWhatsAppMessage(MY_NUMBER, `Torrent download complete for: ${show} ${EP_CODE}`);
+    await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nTorrent download complete!`);
 
     // 2. Subtitles
     const token = await opensubsLogin();
@@ -408,35 +406,35 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
 
     if (subObj) {
       console.log((chalk && chalk.green ? chalk.green : x => x)(`Hebrew subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
-      await sendWhatsAppMessage(MY_NUMBER, `Hebrew subtitles found for: ${show} ${EP_CODE}`);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nHebrew subtitles found!`);
       await downloadSubtitle(subObj, subtitlePath, token);
     } else {
       console.log('Hebrew not found, trying English…');
-      await sendWhatsAppMessage(MY_NUMBER, `Hebrew subtitles not found, searching for English for: ${show} ${EP_CODE}`);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nHebrew subtitles not found :() searching for English subtitles...`);
       subObj = await searchSubtitles(token, 'en');
       if (!subObj) {
         console.log('No English subtitles found either.');
-        await sendWhatsAppMessage(MY_NUMBER, `No subtitles found for: ${show} ${EP_CODE}`);
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nNo subtitles found :(`);
         throw new Error('No subtitles found');
       }
       const engPath = path.join(episodeFolder, subObj.fileName || `${episodeName}.eng.srt`);
       console.log((chalk && chalk.green ? chalk.green : x => x)(`English subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
-      await sendWhatsAppMessage(MY_NUMBER, `English subtitles found for: ${show} ${EP_CODE}, translating to Hebrew...`);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nEnglish subtitles found!`);
       await downloadSubtitle(subObj, engPath, token);
       console.log('Translating subtitles…');
-      await sendWhatsAppMessage(MY_NUMBER, `Translating subtitles to Hebrew for: ${show} ${EP_CODE}`);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nTranslating subtitles from english to Hebrew...`);
       await translateSRTtoHebrew(engPath, subtitlePath);
     }
 
     // 3. Mux subtitles
     const outputVideo = path.join(episodeFolder, `${path.parse(videoPath).name}.hebsub.mp4`);
-    await sendWhatsAppMessage(MY_NUMBER, `Muxing subtitles into video for: ${show} ${EP_CODE}`);
+    await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nMerging video and subtitles...`);
     await muxSubtitles(videoPath, subtitlePath, outputVideo);
     await sendWhatsAppMessage(MY_NUMBER, `✅ All done! Files organized in: ${episodeFolder}`);
     console.log((chalk && chalk.green ? chalk.green : x => x)(`✅ All done! Files organized in: ${episodeFolder}`));
   } catch (err) {
     console.error('⛔', err.message);
-    await sendWhatsAppMessage(MY_NUMBER, `⛔ Error: ${err.message}`);
+    await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\n⛔ Error: ${err.message}`);
     
     // Add delay to ensure WhatsApp messages are delivered before exiting
     console.log('Waiting 10 seconds for WhatsApp messages to be delivered...');
