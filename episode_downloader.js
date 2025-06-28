@@ -25,6 +25,9 @@ const dotenv = require('dotenv');
 const { OpenAI } = require('openai');
 const { program } = require('commander');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
+
 let chalk;
 (async () => {
   chalk = (await import('chalk')).default;
@@ -40,6 +43,59 @@ const execAsync = promisify(exec);
 const { OS_API_KEY } = process.env;
 const OPEN_SUBTITLES_API_KEY = OS_API_KEY || 'rlF1xGalT47V4qYxdgSLR2GFTO3Cool8';
 const OPEN_SUBTITLES_USER_AGENT = 'MyDownloader/1.0';
+
+// --------------------------- WhatsApp Integration --------------------------
+const whatsappClient = new Client({ authStrategy: new LocalAuth() });
+let whatsappReady = false;
+let messageQueue = [];
+
+whatsappClient.on('qr', qr => {
+    console.log('Scan this QR code to connect WhatsApp:');
+    qrcode.generate(qr, { small: true });
+});
+
+whatsappClient.on('ready', () => {
+    whatsappReady = true;
+    console.log('WhatsApp client is ready!');
+    // Send any queued messages
+    for (const { number, message } of messageQueue) {
+        whatsappClient.sendMessage(`${number}@c.us`, message);
+    }
+    messageQueue = [];
+});
+
+whatsappClient.on('auth_failure', () => {
+    console.log('WhatsApp authentication failed');
+});
+
+whatsappClient.on('disconnected', () => {
+    console.log('WhatsApp client disconnected');
+    whatsappReady = false;
+});
+
+// Initialize WhatsApp client
+whatsappClient.initialize();
+
+async function sendWhatsAppMessage(number, message) {
+    if (!whatsappReady) {
+        // Queue the message to send when ready
+        messageQueue.push({ number, message });
+        console.log('WhatsApp client not ready yet. Queuing message:', message);
+        return;
+    }
+    try {
+        console.log(`Attempting to send WhatsApp message to ${number}@c.us:`, message);
+        const result = await whatsappClient.sendMessage(`${number}@c.us`, message);
+        console.log('WhatsApp message sent successfully. Message ID:', result.id._serialized);
+        return result;
+    } catch (error) {
+        console.error('Failed to send WhatsApp message:', error.message);
+        console.error('Error details:', error);
+        throw error;
+    }
+}
+
+const MY_NUMBER = process.env.MY_WHATSAPP_NUMBER;
 
 // --------------------------- CLI Arguments ----------------------------------
 program
@@ -322,6 +378,10 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
 // --------------------------- Main Workflow ---------------------------------
 (async () => {
   try {
+    // Wait for WhatsApp client to be ready before starting
+    console.log('Initializing WhatsApp client...');
+    await waitForWhatsAppReady();
+    
     const outputDir = path.resolve(out);
     if (!existsSync(outputDir)) await fs.mkdir(outputDir, { recursive: true });
 
@@ -330,11 +390,16 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
     const episodeFolder = path.join(outputDir, episodeName);
     if (!existsSync(episodeFolder)) await fs.mkdir(episodeFolder, { recursive: true });
     console.log((chalk && chalk.green ? chalk.green : x => x)(`Created episode folder: ${episodeFolder}`));
+    await sendWhatsAppMessage(MY_NUMBER, `Started search for: ${show} ${EP_CODE}`);
 
     // 1. Torrent search & download
+    await sendWhatsAppMessage(MY_NUMBER, `Searching for torrent for: ${show} ${EP_CODE}`);
     const magnet = await findMagnet();
     console.log((chalk && chalk.green ? chalk.green : x => x)(`Magnet link found`));
+    await sendWhatsAppMessage(MY_NUMBER, `Magnet link found for: ${show} ${EP_CODE}`);
+    await sendWhatsAppMessage(MY_NUMBER, `Starting torrent download for: ${show} ${EP_CODE}`);
     const videoPath = await downloadTorrent(magnet, episodeFolder);
+    await sendWhatsAppMessage(MY_NUMBER, `Torrent download complete for: ${show} ${EP_CODE}`);
 
     // 2. Subtitles
     const token = await opensubsLogin();
@@ -343,27 +408,80 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
 
     if (subObj) {
       console.log((chalk && chalk.green ? chalk.green : x => x)(`Hebrew subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
+      await sendWhatsAppMessage(MY_NUMBER, `Hebrew subtitles found for: ${show} ${EP_CODE}`);
       await downloadSubtitle(subObj, subtitlePath, token);
     } else {
       console.log('Hebrew not found, trying English…');
+      await sendWhatsAppMessage(MY_NUMBER, `Hebrew subtitles not found, searching for English for: ${show} ${EP_CODE}`);
       subObj = await searchSubtitles(token, 'en');
       if (!subObj) {
         console.log('No English subtitles found either.');
+        await sendWhatsAppMessage(MY_NUMBER, `No subtitles found for: ${show} ${EP_CODE}`);
         throw new Error('No subtitles found');
       }
       const engPath = path.join(episodeFolder, subObj.fileName || `${episodeName}.eng.srt`);
       console.log((chalk && chalk.green ? chalk.green : x => x)(`English subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
+      await sendWhatsAppMessage(MY_NUMBER, `English subtitles found for: ${show} ${EP_CODE}, translating to Hebrew...`);
       await downloadSubtitle(subObj, engPath, token);
       console.log('Translating subtitles…');
+      await sendWhatsAppMessage(MY_NUMBER, `Translating subtitles to Hebrew for: ${show} ${EP_CODE}`);
       await translateSRTtoHebrew(engPath, subtitlePath);
     }
 
     // 3. Mux subtitles
     const outputVideo = path.join(episodeFolder, `${path.parse(videoPath).name}.hebsub.mp4`);
+    await sendWhatsAppMessage(MY_NUMBER, `Muxing subtitles into video for: ${show} ${EP_CODE}`);
     await muxSubtitles(videoPath, subtitlePath, outputVideo);
+    await sendWhatsAppMessage(MY_NUMBER, `✅ All done! Files organized in: ${episodeFolder}`);
     console.log((chalk && chalk.green ? chalk.green : x => x)(`✅ All done! Files organized in: ${episodeFolder}`));
   } catch (err) {
     console.error('⛔', err.message);
+    await sendWhatsAppMessage(MY_NUMBER, `⛔ Error: ${err.message}`);
+    
+    // Add delay to ensure WhatsApp messages are delivered before exiting
+    console.log('Waiting 10 seconds for WhatsApp messages to be delivered...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    
     process.exit(1);
+  } finally {
+    // Gracefully close WhatsApp client
+    if (whatsappClient) {
+      console.log('Closing WhatsApp client...');
+      await whatsappClient.destroy();
+    }
+    
+    // Add delay to ensure WhatsApp messages are delivered
+    console.log('Waiting 10 seconds for WhatsApp messages to be delivered...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
   }
 })();
+
+// Graceful shutdown handler
+process.on('SIGINT', async () => {
+  console.log('\nReceived SIGINT, shutting down gracefully...');
+  if (whatsappClient) {
+    await whatsappClient.destroy();
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\nReceived SIGTERM, shutting down gracefully...');
+  if (whatsappClient) {
+    await whatsappClient.destroy();
+  }
+  process.exit(0);
+});
+
+// Wait for WhatsApp client to be ready
+async function waitForWhatsAppReady(timeout = 30000) {
+    const startTime = Date.now();
+    while (!whatsappReady && (Date.now() - startTime) < timeout) {
+        console.log('Waiting for WhatsApp client to be ready...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    if (!whatsappReady) {
+        console.log('WhatsApp client not ready after timeout, continuing anyway...');
+    }
+    return whatsappReady;
+}
