@@ -109,18 +109,9 @@ program
 const options = program.opts();
 const { show, season, episode, out, minSeeds } = options;
 const EP_CODE = `s${String(season).padStart(2, '0')}e${String(episode).padStart(2, '0')}`;
+const episodeName = `${show} ${EP_CODE}`;
 
 // --------------------------- Helpers ---------------------------------------
-function similarity(a, b) {
-  a = a.toLowerCase().replace(/[^a-z0-9]/g, '');
-  b = b.toLowerCase().replace(/[^a-z0-9]/g, '');
-  let matches = 0;
-  for (let i = 0; i < Math.min(a.length, b.length); i++) {
-    if (a[i] === b[i]) matches++;
-  }
-  return matches / Math.max(a.length, b.length);
-}
-
 function scoreTorrent(torrent, searchQuery) {
   const title = torrent.name;
   // --- Similarity logic (commented out for now) ---
@@ -136,10 +127,6 @@ function scoreTorrent(torrent, searchQuery) {
 
   // Use quality as main score, seeders as tiebreaker
   return qualityScore * 1000 + parseInt(torrent.seeders || 0) / 1000;
-}
-
-function pirateBaySearchUrl(query) {
-  return `https://thepiratebay.org/search.php?q=${encodeURIComponent(query)}&all=on&page=0&orderby=99`;
 }
 
 async function findMagnet() {
@@ -169,7 +156,7 @@ async function findMagnet() {
   return magnet;
 }
 
-async function downloadTorrent(magnet, outputDir) {
+async function downloadTorrent(magnet, outputDir, downloadTorrentMessage) {
   console.log((chalk && chalk.green ? chalk.green : x => x)(`Starting torrent download…`));
   let WebTorrent;
   WebTorrent = (await import('webtorrent')).default;
@@ -187,14 +174,27 @@ async function downloadTorrent(magnet, outputDir) {
       }
       const startTime = Date.now();
       let lastLogged = 0;
-      const logInterval = setInterval(() => {
+      let lastPercentNotified = 0;
+      const notifyStep = 20;
+      const logInterval = setInterval(async () => {
         const percent = (torrent.progress * 100).toFixed(2);
+        const percentInt = Math.floor(torrent.progress * 100);
         const elapsed = (Date.now() - startTime) / 1000; // seconds
-        const eta = torrent.timeRemaining ? (torrent.timeRemaining / 1000).toFixed(1) : 'N/A';
+        const eta = torrent.timeRemaining ? (torrent.timeRemaining / 1000) : 0;
         // Only log if progress changed or every 5 seconds
         if (percent !== lastLogged || elapsed % 5 < 1) {
-          process.stdout.write(`\rDownloaded: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta}s   `);
+          process.stdout.write(`\rDownloaded: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta.toFixed(1)}s   `);
           lastLogged = percent;
+        }
+        // WhatsApp update every 20%
+        if (percentInt >= lastPercentNotified + notifyStep) {
+          lastPercentNotified += notifyStep;
+          if (lastPercentNotified <= 100) {
+            await sendWhatsAppMessage(
+              MY_NUMBER,
+              `${downloadTorrentMessage} ${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
+            );
+          }
         }
       }, 1000);
       torrent.on('done', () => {
@@ -206,6 +206,23 @@ async function downloadTorrent(magnet, outputDir) {
       });
     });
   });
+}
+
+// Helper to format seconds as 1d 3h 2m 30s
+function formatDuration(seconds) {
+  seconds = Math.max(0, Math.round(Number(seconds)));
+  const days = Math.floor(seconds / 86400);
+  seconds %= 86400;
+  const hours = Math.floor(seconds / 3600);
+  seconds %= 3600;
+  const minutes = Math.floor(seconds / 60);
+  seconds %= 60;
+  let result = '';
+  if (days) result += `${days}d `;
+  if (hours) result += `${hours}h `;
+  if (minutes) result += `${minutes}m `;
+  result += `${seconds}s`;
+  return result.trim();
 }
 
 // --------------------------- OpenSubtitles API -----------------------------
@@ -329,7 +346,7 @@ async function translateSRTtoHebrew(srcPath, destPath) {
 }
 
 // --------------------------- FFmpeg Mux ------------------------------------
-async function muxSubtitles(videoPath, srtPath, outputPath) {
+async function muxSubtitles(videoPath, srtPath, outputPath, mergeMessage) {
   // Get video duration first
   const getDurationCmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`;
   let totalSeconds = 0;
@@ -345,7 +362,9 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
     const proc = exec(cmd);
     let startTime = Date.now();
     let lastPercent = 0;
-    proc.stderr?.on('data', data => {
+    let lastPercentNotified = 0;
+    const notifyStep = 20;
+    proc.stderr?.on('data', async data => {
       const line = data.toString();
       // Parse time= from ffmpeg output
       const timeMatch = line.match(/time=(\d+):(\d+):(\d+\.\d+)/);
@@ -355,11 +374,22 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
         const seconds = parseFloat(timeMatch[3]);
         const currentSeconds = hours * 3600 + minutes * 60 + seconds;
         const percent = ((currentSeconds / totalSeconds) * 100).toFixed(2);
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        const eta = ((totalSeconds - currentSeconds) / (currentSeconds / (elapsed || 1))).toFixed(1);
+        const percentInt = Math.floor((currentSeconds / totalSeconds) * 100);
+        const elapsed = ((Date.now() - startTime) / 1000);
+        const eta = ((totalSeconds - currentSeconds) / (currentSeconds / (elapsed || 1)));
         if (percent !== lastPercent) {
-          process.stdout.write(`\rProgress: ${percent}% | Elapsed: ${elapsed}s | ETA: ${eta}s   `);
+          process.stdout.write(`\rProgress: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta.toFixed(1)}s   `);
           lastPercent = percent;
+        }
+        // WhatsApp update every 20%
+        if (percentInt >= lastPercentNotified + notifyStep) {
+          lastPercentNotified += notifyStep;
+          if (lastPercentNotified <= 100) {
+            await sendWhatsAppMessage(
+              MY_NUMBER,
+              `${mergeMessage} ${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
+            );
+          }
         }
       }
     });
@@ -377,8 +407,7 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
 
 // --------------------------- Main Workflow ---------------------------------
 (async () => {
-  const episodeName = `${show} ${EP_CODE}`;
-
+  
   try {
     // Wait for WhatsApp client to be ready before starting
     console.log('Initializing WhatsApp client...');
@@ -396,8 +425,13 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
     await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSearching torrent...`);
     const magnet = await findMagnet();
     console.log((chalk && chalk.green ? chalk.green : x => x)(`Magnet link found`));
-    await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\n*Magnet link found!* Starting torrent download...`);
-    const videoPath = await downloadTorrent(magnet, episodeFolder);
+    // Only create the episode folder if a torrent was found
+    if (!existsSync(episodeFolder)) await fs.mkdir(episodeFolder, { recursive: true });
+    console.log((chalk && chalk.green ? chalk.green : x => x)(`Created episode folder: ${episodeFolder}`));
+    const downloadTorrentMessage = 'Starting torrent download...';
+    const foundMessageMessage = `[${episodeName}]\n*Magnet link found!*\n${downloadTorrentMessage}`;
+    await sendWhatsAppMessage(MY_NUMBER, foundMessageMessage);
+    const videoPath = await downloadTorrent(magnet, episodeFolder, downloadTorrentMessage);
     await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nTorrent download complete!`);
 
     // 2. Subtitles
@@ -429,8 +463,9 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
 
     // 3. Mux subtitles
     const outputVideo = path.join(episodeFolder, `${path.parse(videoPath).name}.hebsub.mp4`);
-    await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nMerging video and subtitles...`);
-    await muxSubtitles(videoPath, subtitlePath, outputVideo);
+    const mergeMessage = `[${episodeName}]\nMerging video and subtitles...`;
+    await sendWhatsAppMessage(MY_NUMBER, mergeMessage);
+    await muxSubtitles(videoPath, subtitlePath, outputVideo, mergeMessage);
     await sendWhatsAppMessage(MY_NUMBER, `✅ All done! Files organized in: ${episodeFolder}`);
     console.log((chalk && chalk.green ? chalk.green : x => x)(`✅ All done! Files organized in: ${episodeFolder}`));
   } catch (err) {
