@@ -27,8 +27,8 @@ This script simplifies the process of downloading TV series episodes, fetching H
    OS_API_USER=your_opensubtitles_username
    OS_API_PASS=your_opensubtitles_password
    OS_API_KEY=your_opensubtitles_api_key
-   OPENAI_API_KEY=your_openai_api_key # (for translation)
-   MY_WHATSAPP_NUMBER=972501234567 # (for WhatsApp notifications, country code, no plus sign)
+   OPENAI_API_KEY=your_openai_api_key # (for translation of eng subtitles to hebrew)
+   MY_WHATSAPP_NUMBER=your_whatsapp_phone_number # (for WhatsApp notifications, country code, no plus sign for example - 972501234567)
    ```
 
 ### 🔑 How to get your OpenSubtitles API Key
