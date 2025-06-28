@@ -17,3 +17,6 @@ Run it once/twice a day so once there's available episode it'll download it
 
 # Accepts commands from Slack
 - User should be able to send requests for series and script will listen, search, and respond
+
+# Fix Hebrew translation
+right now it shows dots and question marks at the beginning of the sentence instead of at the end

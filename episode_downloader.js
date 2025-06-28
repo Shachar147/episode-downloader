@@ -236,16 +236,39 @@ async function downloadSubtitle(subObj, dest, token) {
 async function translateSRTtoHebrew(srcPath, destPath) {
   const openai = new OpenAI();
   const text = await fs.readFile(srcPath, 'utf-8');
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    max_tokens: 4096,
-    messages: [
-      { role: 'system', content: 'You are a subtitles translation assistant. Keep timestamps unchanged and translate dialogue only.' },
-      { role: 'user', content: `Translate the following SRT file content to Hebrew while preserving timestamps:\n\n${text}` }
-    ]
-  });
-  const translated = response.choices[0].message.content;
-  await fs.writeFile(destPath, translated, 'utf-8');
+  // Split SRT into blocks
+  const blocks = text.split(/\n\n+/);
+  const chunkSize = 100; // number of subtitle blocks per chunk
+  const chunks = [];
+  for (let i = 0; i < blocks.length; i += chunkSize) {
+    chunks.push(blocks.slice(i, i + chunkSize));
+  }
+  // Create or truncate the destination file at the start
+  await fs.writeFile(destPath, '', 'utf-8');
+  const startTime = Date.now();
+  let lastPercent = 0;
+  console.log((chalk && chalk.green ? chalk.green : x => x)(`Translating file: ${destPath}`));
+  for (let i = 0; i < chunks.length; i++) {
+    const chunkText = chunks[i].join('\n\n');
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 4096,
+      messages: [
+        { role: 'system', content: 'You are a subtitles translation assistant. Keep timestamps unchanged and translate dialogue only. Translate to Hebrew, and ensure the translation is right-to-left. Punctuation such as dots and question marks should appear at the end of the line, not the beginning, as is correct for Hebrew.' },
+        { role: 'user', content: `Translate the following SRT file content to Hebrew while preserving timestamps and right-to-left punctuation:\n\n${chunkText}` }
+      ]
+    });
+    const translated = response.choices[0].message.content.trim();
+    // Append the translated chunk to the file
+    await fs.appendFile(destPath, translated + '\n\n', 'utf-8');
+    // Progress logging
+    const percent = ((i + 1) / chunks.length * 100).toFixed(2);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    const eta = ((chunks.length - (i + 1)) * (elapsed / (i + 1))).toFixed(1);
+    process.stdout.write(`\rProgress: ${percent}% | Elapsed: ${elapsed}s | ETA: ${eta}s   `);
+    lastPercent = percent;
+  }
+  process.stdout.write('\n');
 }
 
 // --------------------------- FFmpeg Mux ------------------------------------
@@ -329,7 +352,7 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
     }
 
     // 3. Mux subtitles
-    const outputVideo = path.join(outputDir, `${path.parse(videoPath).name}.heb.mp4`);
+    const outputVideo = path.join(outputDir, `${path.parse(videoPath).name}.hebsub.mp4`);
     await muxSubtitles(videoPath, subtitlePath, outputVideo);
     console.log('✅ All done!');
   } catch (err) {
