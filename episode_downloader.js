@@ -108,13 +108,13 @@ async function findMagnet() {
   });
   scored.sort((a, b) => b.score - a.score);
   const top = scored[0];
-  console.log(`Selected torrent for download: ${top.name}`);
+  console.log((chalk && chalk.green ? chalk.green : x => x)(`Selected torrent for download: ${top.name}`));
   const magnet = `magnet:?xt=urn:btih:${top.info_hash}&dn=${encodeURIComponent(top.name)}&tr=udp://tracker.openbittorrent.com:80/announce`;
   return magnet;
 }
 
 async function downloadTorrent(magnet, outputDir) {
-  console.log('Starting torrent download…');
+  console.log((chalk && chalk.green ? chalk.green : x => x)(`Starting torrent download…`));
   let WebTorrent;
   WebTorrent = (await import('webtorrent')).default;
   const client = new WebTorrent();
@@ -137,12 +137,13 @@ async function downloadTorrent(magnet, outputDir) {
         const eta = torrent.timeRemaining ? (torrent.timeRemaining / 1000).toFixed(1) : 'N/A';
         // Only log if progress changed or every 5 seconds
         if (percent !== lastLogged || elapsed % 5 < 1) {
-          console.log(`Downloaded: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta}s`);
+          process.stdout.write(`\rDownloaded: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta}s   `);
           lastLogged = percent;
         }
       }, 1000);
       torrent.on('done', () => {
         clearInterval(logInterval);
+        process.stdout.write('\n');
         console.log('Torrent download complete');
         client.destroy();
         resolve(path.join(outputDir, video.path));
@@ -324,15 +325,21 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
     const outputDir = path.resolve(out);
     if (!existsSync(outputDir)) await fs.mkdir(outputDir, { recursive: true });
 
+    // Create episode-specific folder
+    const episodeName = `${show} ${EP_CODE}`;
+    const episodeFolder = path.join(outputDir, episodeName);
+    if (!existsSync(episodeFolder)) await fs.mkdir(episodeFolder, { recursive: true });
+    console.log((chalk && chalk.green ? chalk.green : x => x)(`Created episode folder: ${episodeFolder}`));
+
     // 1. Torrent search & download
     const magnet = await findMagnet();
-    console.log('Magnet link found');
-    const videoPath = await downloadTorrent(magnet, outputDir);
+    console.log((chalk && chalk.green ? chalk.green : x => x)(`Magnet link found`));
+    const videoPath = await downloadTorrent(magnet, episodeFolder);
 
     // 2. Subtitles
     const token = await opensubsLogin();
     let subObj = await searchSubtitles(token, 'he');
-    let subtitlePath = path.join(outputDir, subObj ? subObj.fileName : `${EP_CODE}.srt`);
+    let subtitlePath = path.join(episodeFolder, subObj ? subObj.fileName : `${episodeName}.heb.srt`);
 
     if (subObj) {
       console.log((chalk && chalk.green ? chalk.green : x => x)(`Hebrew subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
@@ -344,7 +351,7 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
         console.log('No English subtitles found either.');
         throw new Error('No subtitles found');
       }
-      const engPath = path.join(outputDir, subObj.fileName || `${EP_CODE}.eng.srt`);
+      const engPath = path.join(episodeFolder, subObj.fileName || `${episodeName}.eng.srt`);
       console.log((chalk && chalk.green ? chalk.green : x => x)(`English subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
       await downloadSubtitle(subObj, engPath, token);
       console.log('Translating subtitles…');
@@ -352,9 +359,9 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
     }
 
     // 3. Mux subtitles
-    const outputVideo = path.join(outputDir, `${path.parse(videoPath).name}.hebsub.mp4`);
+    const outputVideo = path.join(episodeFolder, `${path.parse(videoPath).name}.hebsub.mp4`);
     await muxSubtitles(videoPath, subtitlePath, outputVideo);
-    console.log('✅ All done!');
+    console.log((chalk && chalk.green ? chalk.green : x => x)(`✅ All done! Files organized in: ${episodeFolder}`));
   } catch (err) {
     console.error('⛔', err.message);
     process.exit(1);
