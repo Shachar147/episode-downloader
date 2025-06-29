@@ -3,6 +3,7 @@ const qrcode = require('qrcode-terminal');
 import fs from 'fs';
 import fsSync from 'fs';
 import { getFileInfo, isFileLargerThan } from './file-utils';
+import { COMPRESSION_THRESHOLD_MB } from './compress-utils';
 
 // Use a persistent session folder for WhatsApp authentication
 // Do NOT delete the .wwebjs_auth folder if you want to keep your session and avoid scanning the QR code every time
@@ -191,8 +192,8 @@ export async function sendVideoViaWhatsApp(
   try {
     const fileInfo = getFileInfo(compressedPath);
     
-    if (isFileLargerThan(compressedPath, 95)) { // WhatsApp limit is ~100MB, use 95MB for safety
-      await sendMessage(MY_NUMBER, episodeName, `Compressed file is too big to send on WhatsApp:\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}\n⚠️ WhatsApp limit: ~100MB`);
+    if (isFileLargerThan(compressedPath, COMPRESSION_THRESHOLD_MB)) { // WhatsApp limit is ~100MB, use 95MB for safety
+      await sendMessage(MY_NUMBER, episodeName, `Compressed file is too big to send on WhatsApp:\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}\n⚠️ WhatsApp limit: ~${COMPRESSION_THRESHOLD_MB}MB`);
       return;
     }
     

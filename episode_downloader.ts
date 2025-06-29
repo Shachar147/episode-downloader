@@ -7,7 +7,8 @@ import fs from 'fs/promises';
 import { existsSync } from 'fs';
 import fsSync from 'fs';
 import { program } from 'commander';
-import { compressForWhatsapp, muxSubtitles } from './utils/merge-utils';
+import { muxSubtitles } from './utils/merge-utils';
+import { compressForWhatsapp } from './utils/compress-utils';
 import { waitForWhatsAppReady, whatsappClient, sendVideoViaWhatsApp, sendMessage as sendMessageFunc } from './utils/whatsapp-utils';
 import { downloadTorrent, findMagnet } from './utils/torrent-utils';
 import { downloadSubtitle, opensubsLogin, searchSubtitles, translateSRTtoHebrew } from './utils/subtitles-utils';
@@ -162,11 +163,11 @@ async function main(): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 10000));
     process.exit(1);
   } finally {
-    // Gracefully close WhatsApp client
-    if (whatsappClient) {
-      console.log('Closing WhatsApp client...');
-      await whatsappClient.destroy();
-    }
+    // // Gracefully close WhatsApp client
+    // if (whatsappClient) {
+    //   console.log('Closing WhatsApp client...');
+    //   await whatsappClient.destroy();
+    // }
     
     // Add delay to ensure WhatsApp messages are delivered
     console.log('Waiting 10 seconds for WhatsApp messages to be delivered...');
