@@ -1,7 +1,7 @@
 import path from 'path';
 // @ts-ignore
 const fetch: any = function(...args: any[]) { return import('node-fetch').then(mod => (mod.default || mod)(...args)); };
-import { sendWhatsAppMessage } from './whatsapp-utils';
+import { sendMessage } from './whatsapp-utils';
 import { formatDuration } from './time-utils';
 
 let WebTorrentClass: any;
@@ -61,8 +61,6 @@ export async function findMagnet(show: string, EP_CODE: string, minSeeds: number
   const magnet = `magnet:?xt=urn:btih:${top.info_hash}&dn=${encodeURIComponent(top.name)}&tr=udp://tracker.openbittorrent.com:80/announce`;
   return magnet;
 }
-
-const sendMessage = async (MY_NUMBER: string | undefined, episodeName: string, message:string) => MY_NUMBER && await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\n${message}`);
 
 export async function downloadTorrent(
   magnet: string,

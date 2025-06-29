@@ -1,11 +1,9 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { sendWhatsAppMessage } from './whatsapp-utils';
+import { sendMessage } from './whatsapp-utils';
 import { formatDuration } from './time-utils';
 
 const execAsync = promisify(exec);
-
-const sendMessage = async (MY_NUMBER: string | undefined, episodeName: string, message:string) => MY_NUMBER && await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\n${message}`);
 
 export async function muxSubtitles(
   videoPath: string,

@@ -2,6 +2,7 @@ import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
 const qrcode = require('qrcode-terminal');
 import fs from 'fs';
 import path from 'path';
+import fsSync from 'fs';
 
 // Use a persistent session folder for WhatsApp authentication
 // Do NOT delete the .wwebjs_auth folder if you want to keep your session and avoid scanning the QR code every time
@@ -125,6 +126,8 @@ async function initializeWhatsApp() {
 // Start the initialization
 initializeWhatsApp();
 
+export const sendMessage = async (MY_NUMBER: string | undefined, episodeName: string, message:string) => MY_NUMBER && await sendWhatsAppMessage(MY_NUMBER, `*[${episodeName}]*\n${message}`);
+
 export async function sendWhatsAppMessage(number: string, message: string): Promise<any> {
     if (!whatsappReady) {
         messageQueue.push({ number, message });
@@ -179,4 +182,113 @@ export async function refreshWhatsAppSession(): Promise<boolean> {
         console.error('❌ Failed to refresh WhatsApp session:', error);
         return false;
     }
+}
+
+export async function sendVideoViaWhatsApp(
+  compressedPath: string, 
+  episodeName: string, 
+  MY_NUMBER: string
+): Promise<void> {
+  try {
+    const stats = fsSync.statSync(compressedPath);
+    const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+    
+    if (stats.size > 95 * 1024 * 1024) { // WhatsApp limit is ~100MB, use 95MB for safety
+      await sendMessage(MY_NUMBER, episodeName, `Compressed file is too big to send on WhatsApp (size: ${fileSizeMB} MB).`);
+      return;
+    }
+    
+    // Add retry logic for WhatsApp media sending
+    let retryCount = 0;
+    const maxRetries = 3;
+    let success = false;
+    
+    while (retryCount < maxRetries && !success) {
+      try {
+        if (retryCount > 0) {
+          console.log(`Retry attempt ${retryCount} for WhatsApp media sending...`);
+          await sendMessage(MY_NUMBER, episodeName, `Retry attempt ${retryCount} for sending video...`);
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+        
+        await sendMessage(MY_NUMBER, episodeName, `Sending compressed video via WhatsApp (size: ${fileSizeMB} MB)...`);
+        
+        // Check if file still exists and is readable
+        if (!fsSync.existsSync(compressedPath)) {
+          throw new Error('Compressed file no longer exists');
+        }
+        
+        // Check WhatsApp session status before attempting to send
+        const sessionValid = await checkWhatsAppSession();
+        if (!sessionValid && retryCount === 1) {
+          console.log('Session appears invalid, attempting to refresh...');
+          await refreshWhatsAppSession();
+          // Wait for session to be ready again
+          await new Promise(resolve => setTimeout(resolve, 10000));
+        }
+        
+        console.log('Creating MessageMedia object...');
+        const media = await MessageMedia.fromFilePath(compressedPath);
+        console.log('MessageMedia created successfully, mimeType:', media.mimetype, 'data length:', media.data.length);
+        
+        // Try different approaches for sending
+        let result;
+        if (retryCount === 0) {
+          // First attempt: standard method
+          console.log('Attempting standard media send...');
+          result = await whatsappClient.sendMessage(`${MY_NUMBER}@c.us`, media, { caption: `[${episodeName}] Compressed video` });
+        } else if (retryCount === 1) {
+          // Second attempt: without caption
+          console.log('Attempting media send without caption...');
+          result = await whatsappClient.sendMessage(`${MY_NUMBER}@c.us`, media);
+        } else {
+          // Third attempt: send as document
+          console.log('Attempting to send as document...');
+          result = await whatsappClient.sendMessage(`${MY_NUMBER}@c.us`, media, { 
+            sendMediaAsDocument: true,
+            caption: `[${episodeName}] Compressed video`
+          });
+        }
+        
+        console.log('WhatsApp media sent successfully:', result.id._serialized);
+        success = true;
+        
+      } catch (sendError: any) {
+        retryCount++;
+        console.error(`WhatsApp send attempt ${retryCount} failed:`);
+        console.error('Error name:', sendError.name);
+        console.error('Error message:', sendError.message);
+        console.error('Error stack:', sendError.stack);
+        
+        // Try to get more details about the error
+        if (sendError.message && sendError.message.includes('Evaluation failed')) {
+          console.error('This appears to be a browser evaluation error - possible causes:');
+          console.error('- WhatsApp Web session expired');
+          console.error('- File too large or corrupted');
+          console.error('- Network connectivity issues');
+          console.error('- Browser automation timeout');
+        }
+        
+        if (retryCount >= maxRetries) {
+          throw new Error(`Failed to send media after ${maxRetries} attempts. Last error: ${sendError.name}: ${sendError.message}`);
+        }
+        
+        // Wait longer between retries
+        await new Promise(resolve => setTimeout(resolve, 10000));
+      }
+    }
+  } catch (err: any) {
+    console.error('WhatsApp send error:', err);
+    await sendMessage(MY_NUMBER, episodeName, `WhatsApp sending failed: ${err.message || err}`);
+    
+    // Try to send a fallback message with file info
+    try {
+      const stats = fsSync.statSync(compressedPath);
+      const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+      await sendMessage(MY_NUMBER, episodeName, `Video file ready but couldn't send via WhatsApp.\nFile: ${path.basename(compressedPath)}\nSize: ${fileSizeMB} MB\nLocation: ${compressedPath}`);
+    } catch (fallbackErr) {
+      console.error('Fallback message also failed:', fallbackErr);
+    }
+  }
 } 
