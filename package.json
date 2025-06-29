@@ -12,6 +12,7 @@
   },
   "scripts": {
     "download:rick": "node episode_downloader.js --show 'Rick and Morty' --season 8 --episode 4 --out ~/Videos/ --min-seeds 25",
+    "download:squid": "node episode_downloader.js --show 'Squid Game' --season 3 --episode 3 --out ~/Videos/ --min-seeds 25",
     "download:rick:latest": "node episode_downloader.js --show 'Rick and Morty' --season 8 --episode 6 --out ~/Videos/ --min-seeds 25",
     "download:rick:eng": "node episode_downloader.js --show 'Rick and Morty' --season 8 --episode 1 --out ~/Videos/ --min-seeds 25"
   }

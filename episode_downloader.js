@@ -25,8 +25,9 @@ const dotenv = require('dotenv');
 const { OpenAI } = require('openai');
 const { program } = require('commander');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
+const fsSync = require('fs');
 
 let chalk;
 (async () => {
@@ -405,6 +406,64 @@ async function muxSubtitles(videoPath, srtPath, outputPath, mergeMessage) {
   });
 }
 
+// Compress video for WhatsApp with progress logging
+async function compressForWhatsapp(inputPath, outputPath, progressMessage, episodeName) {
+  // Faster compression: H.264, CRF 35, 480p, mono audio, low bitrate, fast preset
+  const cmd = `ffmpeg -y -i "${inputPath}" -c:v libx264 -preset fast -crf 35 -vf scale=480:-2 -b:v 500k -c:a aac -b:a 32k -ac 1 "${outputPath}"`;
+  console.log('Compressing video for WhatsApp (fast preset, H.264)...');
+  return new Promise((resolve, reject) => {
+    const proc = exec(cmd);
+    let startTime = Date.now();
+    let lastPercent = 0;
+    let lastPercentNotified = 0;
+    const notifyStep = 20;
+    let totalSeconds = 0;
+    // Get duration of input video
+    exec(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${inputPath}"`, (err, stdout) => {
+      if (!err && stdout) {
+        totalSeconds = parseFloat(stdout.trim());
+      }
+    });
+    proc.stderr?.on('data', async data => {
+      const line = data.toString();
+      // Parse time= from ffmpeg output
+      const timeMatch = line.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+      if (timeMatch && totalSeconds > 0) {
+        const hours = parseInt(timeMatch[1], 10);
+        const minutes = parseInt(timeMatch[2], 10);
+        const seconds = parseFloat(timeMatch[3]);
+        const currentSeconds = hours * 3600 + minutes * 60 + seconds;
+        const percent = ((currentSeconds / totalSeconds) * 100).toFixed(2);
+        const percentInt = Math.floor((currentSeconds / totalSeconds) * 100);
+        const elapsed = ((Date.now() - startTime) / 1000);
+        const eta = ((totalSeconds - currentSeconds) / (currentSeconds / (elapsed || 1)));
+        if (percent !== lastPercent) {
+          process.stdout.write(`\r[Compression] Progress: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta.toFixed(1)}s   `);
+          lastPercent = percent;
+        }
+        // WhatsApp update every 20%
+        if (percentInt >= lastPercentNotified + notifyStep) {
+          lastPercentNotified += notifyStep;
+          if (lastPercentNotified <= 100) {
+            await sendWhatsAppMessage(
+              MY_NUMBER,
+              `[${episodeName}]\n${progressMessage} ${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
+            );
+          }
+        }
+      }
+    });
+    proc.on('close', code => {
+      process.stdout.write('\n');
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`ffmpeg compression exited with code ${code}`));
+      }
+    });
+  });
+}
+
 // --------------------------- Main Workflow ---------------------------------
 (async () => {
   
@@ -468,6 +527,26 @@ async function muxSubtitles(videoPath, srtPath, outputPath, mergeMessage) {
     await muxSubtitles(videoPath, subtitlePath, outputVideo, mergeMessage);
     await sendWhatsAppMessage(MY_NUMBER, `✅ All done! Files organized in: ${episodeFolder}`);
     console.log((chalk && chalk.green ? chalk.green : x => x)(`✅ All done! Files organized in: ${episodeFolder}`));
+
+    // 4. Compress for WhatsApp
+    const compressedPath = path.join(episodeFolder, `${path.parse(videoPath).name}.whatsapp.mp4`);
+    try {
+      const compressMessage = 'Compressing video for WhatsApp...';
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\n${compressMessage}`);
+      await compressForWhatsapp(outputVideo, compressedPath, compressMessage, episodeName);
+      const stats = fsSync.statSync(compressedPath);
+      const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+      if (stats.size > 95 * 1024 * 1024) { // WhatsApp limit is ~100MB, use 95MB for safety
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nCompressed file is too big to send on WhatsApp (size: ${fileSizeMB} MB).`);
+      } else {
+        const media = await MessageMedia.fromFilePath(compressedPath);
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSending compressed video via WhatsApp (size: ${fileSizeMB} MB)...`);
+        await whatsappClient.sendMessage(`${MY_NUMBER}@c.us`, media, { caption: `[${episodeName}] Compressed video` });
+      }
+    } catch (err) {
+      console.error('WhatsApp send error:', err);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nCompression or sending failed: ${err.message || err}`);
+    }
   } catch (err) {
     console.error('⛔', err.message);
     await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\n⛔ Error: ${err.message}`);
