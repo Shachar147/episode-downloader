@@ -480,72 +480,206 @@ async function compressForWhatsapp(inputPath, outputPath, progressMessage, episo
     if (!existsSync(episodeFolder)) await fs.mkdir(episodeFolder, { recursive: true });
     console.log((chalk && chalk.green ? chalk.green : x => x)(`Created episode folder: ${episodeFolder}`));
 
-    // 1. Torrent search & download
-    await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSearching torrent...`);
-    const magnet = await findMagnet();
-    console.log((chalk && chalk.green ? chalk.green : x => x)(`Magnet link found`));
-    // Only create the episode folder if a torrent was found
-    if (!existsSync(episodeFolder)) await fs.mkdir(episodeFolder, { recursive: true });
-    console.log((chalk && chalk.green ? chalk.green : x => x)(`Created episode folder: ${episodeFolder}`));
-    const downloadTorrentMessage = 'Starting torrent download...';
-    const foundMessageMessage = `[${episodeName}]\n*Magnet link found!*\n${downloadTorrentMessage}`;
-    await sendWhatsAppMessage(MY_NUMBER, foundMessageMessage);
-    const videoPath = await downloadTorrent(magnet, episodeFolder, downloadTorrentMessage);
-    await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nTorrent download complete!`);
-
-    // 2. Subtitles
-    const token = await opensubsLogin();
-    let subObj = await searchSubtitles(token, 'he');
-    let subtitlePath = path.join(episodeFolder, subObj ? subObj.fileName : `${episodeName}.heb.srt`);
-
-    if (subObj) {
-      console.log((chalk && chalk.green ? chalk.green : x => x)(`Hebrew subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
-      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nHebrew subtitles found!`);
-      await downloadSubtitle(subObj, subtitlePath, token);
+    // Check for existing video files (torrent download)
+    const videoFiles = await fs.readdir(episodeFolder).catch(() => []);
+    const existingVideo = videoFiles.find(file => 
+      /\.(mp4|mkv|avi|mov|wmv|flv)$/i.test(file) && 
+      !file.includes('.hebsub.') && 
+      !file.includes('.whatsapp.')
+    );
+    
+    let videoPath;
+    if (existingVideo) {
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`Skipping torrent download - video file already exists: ${existingVideo}`));
+      videoPath = path.join(episodeFolder, existingVideo);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSkipping torrent download - video file already exists: ${existingVideo}`);
     } else {
-      console.log('Hebrew not found, trying English…');
-      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nHebrew subtitles not found :() searching for English subtitles...`);
-      subObj = await searchSubtitles(token, 'en');
-      if (!subObj) {
-        console.log('No English subtitles found either.');
-        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nNo subtitles found :(`);
-        throw new Error('No subtitles found');
-      }
-      const engPath = path.join(episodeFolder, subObj.fileName || `${episodeName}.eng.srt`);
-      console.log((chalk && chalk.green ? chalk.green : x => x)(`English subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
-      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nEnglish subtitles found!`);
-      await downloadSubtitle(subObj, engPath, token);
-      console.log('Translating subtitles…');
-      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nTranslating subtitles from english to Hebrew...`);
-      await translateSRTtoHebrew(engPath, subtitlePath);
+      // 1. Torrent search & download
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSearching torrent...`);
+      const magnet = await findMagnet();
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`Magnet link found`));
+      const downloadTorrentMessage = 'Starting torrent download...';
+      const foundMessageMessage = `[${episodeName}]\n*Magnet link found!*\n${downloadTorrentMessage}`;
+      await sendWhatsAppMessage(MY_NUMBER, foundMessageMessage);
+      videoPath = await downloadTorrent(magnet, episodeFolder, downloadTorrentMessage);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nTorrent download complete!`);
     }
 
-    // 3. Mux subtitles
+    // Check for existing subtitle files
+    const subtitleFiles = await fs.readdir(episodeFolder).catch(() => []);
+    const existingSubtitle = subtitleFiles.find(file => 
+      /\.(srt)$/i.test(file) && 
+      (file.includes('.heb.') || file.includes('.hebsub.'))
+    );
+    
+    let subtitlePath;
+    if (existingSubtitle) {
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`Skipping subtitle download - subtitle file already exists: ${existingSubtitle}`));
+      subtitlePath = path.join(episodeFolder, existingSubtitle);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSkipping subtitle download - subtitle file already exists: ${existingSubtitle}`);
+    } else {
+      // 2. Subtitles
+      const token = await opensubsLogin();
+      let subObj = await searchSubtitles(token, 'he');
+      subtitlePath = path.join(episodeFolder, subObj ? subObj.fileName : `${episodeName}.heb.srt`);
+
+      if (subObj) {
+        console.log((chalk && chalk.green ? chalk.green : x => x)(`Hebrew subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nHebrew subtitles found!`);
+        await downloadSubtitle(subObj, subtitlePath, token);
+      } else {
+        console.log('Hebrew not found, trying English…');
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nHebrew subtitles not found :() searching for English subtitles...`);
+        subObj = await searchSubtitles(token, 'en');
+        if (!subObj) {
+          console.log('No English subtitles found either.');
+          await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nNo subtitles found :(`);
+          throw new Error('No subtitles found');
+        }
+        const engPath = path.join(episodeFolder, subObj.fileName || `${episodeName}.eng.srt`);
+        console.log((chalk && chalk.green ? chalk.green : x => x)(`English subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nEnglish subtitles found!`);
+        await downloadSubtitle(subObj, engPath, token);
+        console.log('Translating subtitles…');
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nTranslating subtitles from english to Hebrew...`);
+        await translateSRTtoHebrew(engPath, subtitlePath);
+      }
+    }
+
+    // Check for existing muxed video
     const outputVideo = path.join(episodeFolder, `${path.parse(videoPath).name}.hebsub.mp4`);
-    const mergeMessage = `[${episodeName}]\nMerging video and subtitles...`;
-    await sendWhatsAppMessage(MY_NUMBER, mergeMessage);
-    await muxSubtitles(videoPath, subtitlePath, outputVideo, mergeMessage);
+    if (existsSync(outputVideo)) {
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`Skipping subtitle muxing - muxed video already exists: ${path.basename(outputVideo)}`));
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSkipping subtitle muxing - muxed video already exists: ${path.basename(outputVideo)}`);
+    } else {
+      // 3. Mux subtitles
+      const mergeMessage = `[${episodeName}]\nMerging video and subtitles...`;
+      await sendWhatsAppMessage(MY_NUMBER, mergeMessage);
+      await muxSubtitles(videoPath, subtitlePath, outputVideo, mergeMessage);
+    }
+    
     await sendWhatsAppMessage(MY_NUMBER, `✅ All done! Files organized in: ${episodeFolder}`);
     console.log((chalk && chalk.green ? chalk.green : x => x)(`✅ All done! Files organized in: ${episodeFolder}`));
 
-    // 4. Compress for WhatsApp
+    // Check for existing compressed video
     const compressedPath = path.join(episodeFolder, `${path.parse(videoPath).name}.whatsapp.mp4`);
+    if (existsSync(compressedPath)) {
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`Skipping compression - compressed video already exists: ${path.basename(compressedPath)}`));
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSkipping compression - compressed video already exists: ${path.basename(compressedPath)}`);
+    } else {
+      // 4. Compress for WhatsApp
+      try {
+        const compressMessage = 'Compressing video for WhatsApp...';
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\n${compressMessage}`);
+        await compressForWhatsapp(outputVideo, compressedPath, compressMessage, episodeName);
+      } catch (err) {
+        console.error('Compression error:', err);
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nCompression failed: ${err.message || err}`);
+        throw err;
+      }
+    }
+
+    // Send via WhatsApp (always try to send if compressed file exists)
     try {
-      const compressMessage = 'Compressing video for WhatsApp...';
-      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\n${compressMessage}`);
-      await compressForWhatsapp(outputVideo, compressedPath, compressMessage, episodeName);
       const stats = fsSync.statSync(compressedPath);
       const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+      
       if (stats.size > 95 * 1024 * 1024) { // WhatsApp limit is ~100MB, use 95MB for safety
         await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nCompressed file is too big to send on WhatsApp (size: ${fileSizeMB} MB).`);
       } else {
-        const media = await MessageMedia.fromFilePath(compressedPath);
-        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSending compressed video via WhatsApp (size: ${fileSizeMB} MB)...`);
-        await whatsappClient.sendMessage(`${MY_NUMBER}@c.us`, media, { caption: `[${episodeName}] Compressed video` });
+        // Add retry logic for WhatsApp media sending
+        let retryCount = 0;
+        const maxRetries = 3;
+        let success = false;
+        
+        while (retryCount < maxRetries && !success) {
+          try {
+            if (retryCount > 0) {
+              console.log(`Retry attempt ${retryCount} for WhatsApp media sending...`);
+              await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nRetry attempt ${retryCount} for sending video...`);
+              // Wait before retry
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+            
+            await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSending compressed video via WhatsApp (size: ${fileSizeMB} MB)...`);
+            
+            // Check if file still exists and is readable
+            if (!fsSync.existsSync(compressedPath)) {
+              throw new Error('Compressed file no longer exists');
+            }
+            
+            // Check WhatsApp session status before attempting to send
+            const sessionValid = await checkWhatsAppSession();
+            if (!sessionValid && retryCount === 1) {
+              console.log('Session appears invalid, attempting to refresh...');
+              await refreshWhatsAppSession();
+              // Wait for session to be ready again
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            
+            console.log('Creating MessageMedia object...');
+            const media = await MessageMedia.fromFilePath(compressedPath);
+            console.log('MessageMedia created successfully, mimeType:', media.mimetype, 'data length:', media.data.length);
+            
+            // Try different approaches for sending
+            let result;
+            if (retryCount === 0) {
+              // First attempt: standard method
+              console.log('Attempting standard media send...');
+              result = await whatsappClient.sendMessage(`${MY_NUMBER}@c.us`, media, { caption: `[${episodeName}] Compressed video` });
+            } else if (retryCount === 1) {
+              // Second attempt: without caption
+              console.log('Attempting media send without caption...');
+              result = await whatsappClient.sendMessage(`${MY_NUMBER}@c.us`, media);
+            } else {
+              // Third attempt: send as document
+              console.log('Attempting to send as document...');
+              result = await whatsappClient.sendMessage(`${MY_NUMBER}@c.us`, media, { 
+                sendMediaAsDocument: true,
+                caption: `[${episodeName}] Compressed video`
+              });
+            }
+            
+            console.log('WhatsApp media sent successfully:', result.id._serialized);
+            success = true;
+            
+          } catch (sendError) {
+            retryCount++;
+            console.error(`WhatsApp send attempt ${retryCount} failed:`);
+            console.error('Error name:', sendError.name);
+            console.error('Error message:', sendError.message);
+            console.error('Error stack:', sendError.stack);
+            
+            // Try to get more details about the error
+            if (sendError.message && sendError.message.includes('Evaluation failed')) {
+              console.error('This appears to be a browser evaluation error - possible causes:');
+              console.error('- WhatsApp Web session expired');
+              console.error('- File too large or corrupted');
+              console.error('- Network connectivity issues');
+              console.error('- Browser automation timeout');
+            }
+            
+            if (retryCount >= maxRetries) {
+              throw new Error(`Failed to send media after ${maxRetries} attempts. Last error: ${sendError.name}: ${sendError.message}`);
+            }
+            
+            // Wait longer between retries
+            await new Promise(resolve => setTimeout(resolve, 10000));
+          }
+        }
       }
     } catch (err) {
       console.error('WhatsApp send error:', err);
-      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nCompression or sending failed: ${err.message || err}`);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nWhatsApp sending failed: ${err.message || err}`);
+      
+      // Try to send a fallback message with file info
+      try {
+        const stats = fsSync.statSync(compressedPath);
+        const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nVideo file ready but couldn't send via WhatsApp.\nFile: ${path.basename(compressedPath)}\nSize: ${fileSizeMB} MB\nLocation: ${compressedPath}`);
+      } catch (fallbackErr) {
+        console.error('Fallback message also failed:', fallbackErr);
+      }
     }
   } catch (err) {
     console.error('⛔', err.message);
@@ -597,4 +731,33 @@ async function waitForWhatsAppReady(timeout = 30000) {
         console.log('WhatsApp client not ready after timeout, continuing anyway...');
     }
     return whatsappReady;
+}
+
+// Check WhatsApp Web session status
+async function checkWhatsAppSession() {
+    try {
+        console.log('Checking WhatsApp Web session status...');
+        // Try to get basic info to test if session is valid
+        const info = await whatsappClient.getState();
+        console.log('WhatsApp session state:', info);
+        return info === 'CONNECTED';
+    } catch (error) {
+        console.error('Error checking WhatsApp session:', error);
+        return false;
+    }
+}
+
+// Refresh WhatsApp Web session if needed
+async function refreshWhatsAppSession() {
+    try {
+        console.log('Attempting to refresh WhatsApp Web session...');
+        await whatsappClient.logout();
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await whatsappClient.initialize();
+        console.log('WhatsApp session refresh initiated');
+        return true;
+    } catch (error) {
+        console.error('Failed to refresh WhatsApp session:', error);
+        return false;
+    }
 }
