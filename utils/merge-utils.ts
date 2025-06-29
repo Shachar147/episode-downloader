@@ -2,6 +2,8 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { sendMessage } from './whatsapp-utils';
 import { formatDuration } from './time-utils';
+import { getFileSizeMB } from './file-utils';
+import fs from 'fs';
 
 const execAsync = promisify(exec);
 
@@ -42,15 +44,26 @@ export async function muxSubtitles(
         const percentInt = Math.floor((currentSeconds / totalSeconds) * 100);
         const elapsed = ((Date.now() - startTime) / 1000);
         const eta = ((totalSeconds - currentSeconds) / (currentSeconds / (elapsed || 1)));
+        
+        // Get current file size if file exists
+        let currentFileSize = 'N/A';
+        try {
+          if (fs.existsSync(outputPath)) {
+            currentFileSize = getFileSizeMB(outputPath);
+          }
+        } catch (error) {
+          // File size check failed, keep as "Unknown"
+        }
+        
         if (percent !== lastPercent) {
-          process.stdout.write(`\rProgress: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta.toFixed(1)}s   `);
+          process.stdout.write(`\rProgress: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta.toFixed(1)}s | Size: ${currentFileSize}   `);
           lastPercent = percent;
         }
         if (percentInt >= lastPercentNotified + notifyStep) {
           lastPercentNotified += notifyStep;
           if (lastPercentNotified <= 100) {
             await sendMessage(MY_NUMBER, episodeName,
-              `${mergeMessage} ${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
+              `${mergeMessage}\n(${lastPercentNotified}% ,Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)}, Size: ${currentFileSize})`
             );
           }
         }
@@ -103,8 +116,19 @@ export async function compressForWhatsapp(
         const percentInt = Math.floor((currentSeconds / totalSeconds) * 100);
         const elapsed = ((Date.now() - startTime) / 1000);
         const eta = ((totalSeconds - currentSeconds) / (currentSeconds / (elapsed || 1)));
+        
+        // Get current file size if file exists
+        let currentFileSize = 'N/A';
+        try {
+          if (fs.existsSync(outputPath)) {
+            currentFileSize = getFileSizeMB(outputPath);
+          }
+        } catch (error) {
+          // File size check failed, keep as "Unknown"
+        }
+        
         if (percent !== lastPercent) {
-          process.stdout.write(`\r[Compression] Progress: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta.toFixed(1)}s   `);
+          process.stdout.write(`\r[Compression] Progress: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta.toFixed(1)}s | Size: ${currentFileSize}   `);
           lastPercent = percent;
         }
         if (percentInt >= lastPercentNotified + notifyStep) {
@@ -113,7 +137,7 @@ export async function compressForWhatsapp(
             await sendMessage(
               MY_NUMBER,
               episodeName,
-              `{progressMessage} ${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
+              `${progressMessage}\n(${lastPercentNotified}%, Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)}, Size: ${currentFileSize})`
             );
           }
         }

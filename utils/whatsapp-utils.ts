@@ -1,13 +1,12 @@
 import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
 const qrcode = require('qrcode-terminal');
 import fs from 'fs';
-import path from 'path';
 import fsSync from 'fs';
+import { getFileInfo, isFileLargerThan } from './file-utils';
 
 // Use a persistent session folder for WhatsApp authentication
 // Do NOT delete the .wwebjs_auth folder if you want to keep your session and avoid scanning the QR code every time
 const SESSION_PATH = './.wwebjs_auth';
-const CACHE_PATH = './.wwebjs_cache';
 
 // Check if session files exist
 function sessionExists(): boolean {
@@ -190,11 +189,10 @@ export async function sendVideoViaWhatsApp(
   MY_NUMBER: string
 ): Promise<void> {
   try {
-    const stats = fsSync.statSync(compressedPath);
-    const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+    const fileInfo = getFileInfo(compressedPath);
     
-    if (stats.size > 95 * 1024 * 1024) { // WhatsApp limit is ~100MB, use 95MB for safety
-      await sendMessage(MY_NUMBER, episodeName, `Compressed file is too big to send on WhatsApp (size: ${fileSizeMB} MB).`);
+    if (isFileLargerThan(compressedPath, 95)) { // WhatsApp limit is ~100MB, use 95MB for safety
+      await sendMessage(MY_NUMBER, episodeName, `Compressed file is too big to send on WhatsApp:\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}\n⚠️ WhatsApp limit: ~100MB`);
       return;
     }
     
@@ -211,8 +209,9 @@ export async function sendVideoViaWhatsApp(
           // Wait before retry
           await new Promise(resolve => setTimeout(resolve, 5000));
         }
-        
-        await sendMessage(MY_NUMBER, episodeName, `Sending compressed video via WhatsApp (size: ${fileSizeMB} MB)...`);
+        else {
+            await sendMessage(MY_NUMBER, episodeName, `Sending compressed video via WhatsApp (size: ${fileInfo.size})...`);
+        }
         
         // Check if file still exists and is readable
         if (!fsSync.existsSync(compressedPath)) {
@@ -284,9 +283,8 @@ export async function sendVideoViaWhatsApp(
     
     // Try to send a fallback message with file info
     try {
-      const stats = fsSync.statSync(compressedPath);
-      const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
-      await sendMessage(MY_NUMBER, episodeName, `Video file ready but couldn't send via WhatsApp.\nFile: ${path.basename(compressedPath)}\nSize: ${fileSizeMB} MB\nLocation: ${compressedPath}`);
+      const fileInfo = getFileInfo(compressedPath);
+      await sendMessage(MY_NUMBER, episodeName, `Video file ready but couldn't send via WhatsApp:\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}\n📂 Location: ${compressedPath}`);
     } catch (fallbackErr) {
       console.error('Fallback message also failed:', fallbackErr);
     }

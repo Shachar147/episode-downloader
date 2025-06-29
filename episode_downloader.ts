@@ -11,6 +11,7 @@ import { compressForWhatsapp, muxSubtitles } from './utils/merge-utils';
 import { waitForWhatsAppReady, whatsappClient, sendVideoViaWhatsApp, sendMessage as sendMessageFunc } from './utils/whatsapp-utils';
 import { downloadTorrent, findMagnet } from './utils/torrent-utils';
 import { downloadSubtitle, opensubsLogin, searchSubtitles, translateSRTtoHebrew } from './utils/subtitles-utils';
+import { getFileInfo } from './utils/file-utils';
 import { MessageMedia } from 'whatsapp-web.js';
 
 const MY_NUMBER = process.env.MY_WHATSAPP_NUMBER;
@@ -49,13 +50,15 @@ async function handleVideoDownload(episodeFolder: string): Promise<string> {
   let videoPath: string;
   if (existingVideo) {
     videoPath = path.join(episodeFolder, existingVideo || '');
-    await sendMessage(`Skipping torrent download - video file already exists: ${existingVideo || ''}`);
+    const fileInfo = getFileInfo(videoPath);
+    await sendMessage(`Skipping torrent download -\nVideo file already exists:\n\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}`);
   } else {
     await sendMessage(`Searching torrent...`);
     const magnet = await findMagnet(show, EP_CODE, minSeeds);
     await sendMessage(`*Magnet link found!*\nStarting torrent download...`);
     videoPath = await downloadTorrent(magnet, episodeFolder, 'Starting torrent download...', MY_NUMBER || '', episodeName);
-    await sendMessage(`Torrent download complete!`);
+    const fileInfo = getFileInfo(videoPath);
+    await sendMessage(`Torrent download complete!\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}`);
   }
   return videoPath;
 }
@@ -70,7 +73,7 @@ async function handleSubtitles(episodeFolder: string): Promise<string> {
   let subtitlePath: string;
   if (existingSubtitle) {
     subtitlePath = path.join(episodeFolder, existingSubtitle || '');
-    await sendMessage(`Skipping subtitle download - subtitle file already exists: ${existingSubtitle || ''}`);
+    await sendMessage(`Skipping subtitle download - \nSubtitle file already exists: \n\n${existingSubtitle || ''}`);
   } else {
     const token = await opensubsLogin();
     let subObj = await searchSubtitles(token, 'he', show, season, episode);
@@ -98,11 +101,13 @@ async function handleSubtitles(episodeFolder: string): Promise<string> {
 async function handleMuxing(videoPath: string, subtitlePath: string, episodeFolder: string): Promise<string> {
   const outputVideo = path.join(episodeFolder, `${path.parse(videoPath || '').name}.hebsub.mp4`);
   if (existsSync(outputVideo)) {
-    await sendMessage(`Skipping subtitle muxing - muxed video already exists: ${path.basename(outputVideo)}`);
+    await sendMessage(`Skipping video & subtitles merge -\nMerged video already exists:\n\n${path.basename(outputVideo)}`);
   } else {
     const mergeMessage = `Merging video and subtitles...`;
     await sendMessage(mergeMessage);
     await muxSubtitles(videoPath || '', subtitlePath || '', outputVideo, mergeMessage, MY_NUMBER || '', episodeName);
+    const fileInfo = getFileInfo(outputVideo);
+    await sendMessage(`Merge completed:\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}`);
   }
   return outputVideo;
 }
@@ -110,12 +115,14 @@ async function handleMuxing(videoPath: string, subtitlePath: string, episodeFold
 async function handleCompression(videoPath: string, outputVideo: string, episodeFolder: string): Promise<string> {
   const compressedPath = path.join(episodeFolder, `${path.parse(videoPath || '').name}.whatsapp.mp4`);
   if (existsSync(compressedPath)) {
-    await sendMessage(`Skipping compression - compressed video already exists: ${path.basename(compressedPath)}`);
+    await sendMessage(`Skipping compression - \nCompressed video already exists:\n\n${path.basename(compressedPath)}`);
   } else {
     try {
       const compressMessage = 'Compressing video for WhatsApp...';
       await sendMessage(`${compressMessage}`);
       await compressForWhatsapp(outputVideo, compressedPath, compressMessage, episodeName, MY_NUMBER || '');
+      const fileInfo = getFileInfo(compressedPath);
+      await sendMessage(`Compression completed:\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}`);
     } catch (err: any) {
       await sendMessage(`Compression failed: ${err.message || err}`);
       throw err;
@@ -143,8 +150,9 @@ async function main(): Promise<void> {
     // Step 5: Handle compression
     const compressedPath = await handleCompression(videoPath, outputVideo, episodeFolder);
     
-    // Step 6: Send completion message
-    await sendMessage(`✅ All done!\nFiles organized in: ${episodeFolder}`);
+    // Step 6: Send completion message with final file info
+    const finalFileInfo = getFileInfo(compressedPath);
+    await sendMessage(`✅ All done!\n\n📁 Final file: ${finalFileInfo.name}\n📊 Size: ${finalFileInfo.size}\n📂 Location: ${episodeFolder}`);
     
     // Step 7: Send video via WhatsApp
     await sendVideoViaWhatsApp(compressedPath, episodeName, MY_NUMBER || '');
