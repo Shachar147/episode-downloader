@@ -46,7 +46,13 @@ const OPEN_SUBTITLES_API_KEY = OS_API_KEY || 'rlF1xGalT47V4qYxdgSLR2GFTO3Cool8';
 const OPEN_SUBTITLES_USER_AGENT = 'MyDownloader/1.0';
 
 // --------------------------- WhatsApp Integration --------------------------
-const whatsappClient = new Client({ authStrategy: new LocalAuth() });
+const whatsappClient = new Client({ 
+    authStrategy: new LocalAuth(),
+    puppeteer: {
+        executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    }
+});
 let whatsappReady = false;
 let messageQueue = [];
 

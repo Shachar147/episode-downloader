@@ -94,3 +94,35 @@ The script will wait for the WhatsApp client to be ready before proceeding with 
 - Errors
 
 > **Note:** Your computer must stay online and logged in to WhatsApp Web for notifications to work.
+
+## 🔧 Troubleshooting
+
+### WhatsApp Web Issues
+
+If WhatsApp notifications stop working or you encounter connection errors:
+
+1. **Clear WhatsApp session data:**
+   ```sh
+   rm -rf .wwebjs_auth
+   rm -rf .wwebjs_cache
+   ```
+
+2. **Disconnect linked devices from WhatsApp:**
+   - Open WhatsApp on your phone
+   - Go to **Settings** → **Linked Devices**
+   - Remove any existing WhatsApp Web sessions
+
+3. **Restart the script:**
+   ```sh
+   npm run download:rick
+   ```
+
+4. **Scan the QR code again** when prompted
+
+This should resolve most WhatsApp Web connection issues.
+
+### Other Common Issues
+
+- **"Bad CPU type in executable"**: You're running Intel binaries on Apple Silicon. Install ARM64 versions of Node.js and FFmpeg.
+- **FFmpeg not found**: Install FFmpeg via Homebrew: `brew install ffmpeg`
+- **Compression errors**: Check that the input video file exists and is not corrupted.
