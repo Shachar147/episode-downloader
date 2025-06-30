@@ -6,10 +6,13 @@
     "dotenv": "^16.6.0",
     "node-fetch": "^3.3.2",
     "openai": "^5.8.1",
-    "webtorrent": "^2.6.8"
+    "webtorrent": "^2.6.8",
+    "whatsapp-web.js": "^1.23.0",
+    "qrcode-terminal": "^0.12.0"
   },
   "scripts": {
     "download:rick": "node episode_downloader.js --show 'Rick and Morty' --season 8 --episode 4 --out ~/Videos/ --min-seeds 25",
+    "download:squid": "node episode_downloader.js --show 'Squid Game' --season 3 --episode 1 --out ~/Videos/ --min-seeds 25",
     "download:rick:latest": "node episode_downloader.js --show 'Rick and Morty' --season 8 --episode 6 --out ~/Videos/ --min-seeds 25",
     "download:rick:eng": "node episode_downloader.js --show 'Rick and Morty' --season 8 --episode 1 --out ~/Videos/ --min-seeds 25"
   }

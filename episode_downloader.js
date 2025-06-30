@@ -25,6 +25,10 @@ const dotenv = require('dotenv');
 const { OpenAI } = require('openai');
 const { program } = require('commander');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
+const fsSync = require('fs');
+
 let chalk;
 (async () => {
   chalk = (await import('chalk')).default;
@@ -41,6 +45,65 @@ const { OS_API_KEY } = process.env;
 const OPEN_SUBTITLES_API_KEY = OS_API_KEY || 'rlF1xGalT47V4qYxdgSLR2GFTO3Cool8';
 const OPEN_SUBTITLES_USER_AGENT = 'MyDownloader/1.0';
 
+// --------------------------- WhatsApp Integration --------------------------
+const whatsappClient = new Client({ 
+    authStrategy: new LocalAuth(),
+    puppeteer: {
+        executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    }
+});
+let whatsappReady = false;
+let messageQueue = [];
+
+whatsappClient.on('qr', qr => {
+    console.log('Scan this QR code to connect WhatsApp:');
+    qrcode.generate(qr, { small: true });
+});
+
+whatsappClient.on('ready', () => {
+    whatsappReady = true;
+    console.log('WhatsApp client is ready!');
+    // Send any queued messages
+    for (const { number, message } of messageQueue) {
+        whatsappClient.sendMessage(`${number}@c.us`, message);
+    }
+    messageQueue = [];
+});
+
+whatsappClient.on('auth_failure', () => {
+    console.log('WhatsApp authentication failed');
+});
+
+whatsappClient.on('disconnected', () => {
+    console.log('WhatsApp client disconnected');
+    whatsappReady = false;
+});
+
+// Initialize WhatsApp client
+whatsappClient.initialize();
+
+async function sendWhatsAppMessage(number, message) {
+    if (!whatsappReady) {
+        // Queue the message to send when ready
+        messageQueue.push({ number, message });
+        console.log('WhatsApp client not ready yet. Queuing message:', message);
+        return;
+    }
+    try {
+        console.log(`Attempting to send WhatsApp message to ${number}@c.us:`, message);
+        const result = await whatsappClient.sendMessage(`${number}@c.us`, message);
+        console.log('WhatsApp message sent successfully. Message ID:', result.id._serialized);
+        return result;
+    } catch (error) {
+        console.error('Failed to send WhatsApp message:', error.message);
+        console.error('Error details:', error);
+        throw error;
+    }
+}
+
+const MY_NUMBER = process.env.MY_WHATSAPP_NUMBER;
+
 // --------------------------- CLI Arguments ----------------------------------
 program
   .requiredOption('--show <title>', 'Show title, e.g., "Rick and Morty"')
@@ -53,18 +116,9 @@ program
 const options = program.opts();
 const { show, season, episode, out, minSeeds } = options;
 const EP_CODE = `s${String(season).padStart(2, '0')}e${String(episode).padStart(2, '0')}`;
+const episodeName = `${show} ${EP_CODE}`;
 
 // --------------------------- Helpers ---------------------------------------
-function similarity(a, b) {
-  a = a.toLowerCase().replace(/[^a-z0-9]/g, '');
-  b = b.toLowerCase().replace(/[^a-z0-9]/g, '');
-  let matches = 0;
-  for (let i = 0; i < Math.min(a.length, b.length); i++) {
-    if (a[i] === b[i]) matches++;
-  }
-  return matches / Math.max(a.length, b.length);
-}
-
 function scoreTorrent(torrent, searchQuery) {
   const title = torrent.name;
   // --- Similarity logic (commented out for now) ---
@@ -80,10 +134,6 @@ function scoreTorrent(torrent, searchQuery) {
 
   // Use quality as main score, seeders as tiebreaker
   return qualityScore * 1000 + parseInt(torrent.seeders || 0) / 1000;
-}
-
-function pirateBaySearchUrl(query) {
-  return `https://thepiratebay.org/search.php?q=${encodeURIComponent(query)}&all=on&page=0&orderby=99`;
 }
 
 async function findMagnet() {
@@ -113,7 +163,7 @@ async function findMagnet() {
   return magnet;
 }
 
-async function downloadTorrent(magnet, outputDir) {
+async function downloadTorrent(magnet, outputDir, downloadTorrentMessage) {
   console.log((chalk && chalk.green ? chalk.green : x => x)(`Starting torrent download…`));
   let WebTorrent;
   WebTorrent = (await import('webtorrent')).default;
@@ -131,14 +181,27 @@ async function downloadTorrent(magnet, outputDir) {
       }
       const startTime = Date.now();
       let lastLogged = 0;
-      const logInterval = setInterval(() => {
+      let lastPercentNotified = 0;
+      const notifyStep = 20;
+      const logInterval = setInterval(async () => {
         const percent = (torrent.progress * 100).toFixed(2);
+        const percentInt = Math.floor(torrent.progress * 100);
         const elapsed = (Date.now() - startTime) / 1000; // seconds
-        const eta = torrent.timeRemaining ? (torrent.timeRemaining / 1000).toFixed(1) : 'N/A';
+        const eta = torrent.timeRemaining ? (torrent.timeRemaining / 1000) : 0;
         // Only log if progress changed or every 5 seconds
         if (percent !== lastLogged || elapsed % 5 < 1) {
-          process.stdout.write(`\rDownloaded: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta}s   `);
+          process.stdout.write(`\rDownloaded: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta.toFixed(1)}s   `);
           lastLogged = percent;
+        }
+        // WhatsApp update every 20%
+        if (percentInt >= lastPercentNotified + notifyStep) {
+          lastPercentNotified += notifyStep;
+          if (lastPercentNotified <= 100) {
+            await sendWhatsAppMessage(
+              MY_NUMBER,
+              `${downloadTorrentMessage} ${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
+            );
+          }
         }
       }, 1000);
       torrent.on('done', () => {
@@ -150,6 +213,23 @@ async function downloadTorrent(magnet, outputDir) {
       });
     });
   });
+}
+
+// Helper to format seconds as 1d 3h 2m 30s
+function formatDuration(seconds) {
+  seconds = Math.max(0, Math.round(Number(seconds)));
+  const days = Math.floor(seconds / 86400);
+  seconds %= 86400;
+  const hours = Math.floor(seconds / 3600);
+  seconds %= 3600;
+  const minutes = Math.floor(seconds / 60);
+  seconds %= 60;
+  let result = '';
+  if (days) result += `${days}d `;
+  if (hours) result += `${hours}h `;
+  if (minutes) result += `${minutes}m `;
+  result += `${seconds}s`;
+  return result.trim();
 }
 
 // --------------------------- OpenSubtitles API -----------------------------
@@ -273,7 +353,7 @@ async function translateSRTtoHebrew(srcPath, destPath) {
 }
 
 // --------------------------- FFmpeg Mux ------------------------------------
-async function muxSubtitles(videoPath, srtPath, outputPath) {
+async function muxSubtitles(videoPath, srtPath, outputPath, mergeMessage) {
   // Get video duration first
   const getDurationCmd = `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`;
   let totalSeconds = 0;
@@ -289,7 +369,9 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
     const proc = exec(cmd);
     let startTime = Date.now();
     let lastPercent = 0;
-    proc.stderr?.on('data', data => {
+    let lastPercentNotified = 0;
+    const notifyStep = 20;
+    proc.stderr?.on('data', async data => {
       const line = data.toString();
       // Parse time= from ffmpeg output
       const timeMatch = line.match(/time=(\d+):(\d+):(\d+\.\d+)/);
@@ -299,11 +381,22 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
         const seconds = parseFloat(timeMatch[3]);
         const currentSeconds = hours * 3600 + minutes * 60 + seconds;
         const percent = ((currentSeconds / totalSeconds) * 100).toFixed(2);
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        const eta = ((totalSeconds - currentSeconds) / (currentSeconds / (elapsed || 1))).toFixed(1);
+        const percentInt = Math.floor((currentSeconds / totalSeconds) * 100);
+        const elapsed = ((Date.now() - startTime) / 1000);
+        const eta = ((totalSeconds - currentSeconds) / (currentSeconds / (elapsed || 1)));
         if (percent !== lastPercent) {
-          process.stdout.write(`\rProgress: ${percent}% | Elapsed: ${elapsed}s | ETA: ${eta}s   `);
+          process.stdout.write(`\rProgress: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta.toFixed(1)}s   `);
           lastPercent = percent;
+        }
+        // WhatsApp update every 20%
+        if (percentInt >= lastPercentNotified + notifyStep) {
+          lastPercentNotified += notifyStep;
+          if (lastPercentNotified <= 100) {
+            await sendWhatsAppMessage(
+              MY_NUMBER,
+              `${mergeMessage} ${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
+            );
+          }
         }
       }
     });
@@ -319,51 +412,358 @@ async function muxSubtitles(videoPath, srtPath, outputPath) {
   });
 }
 
+// Compress video for WhatsApp with progress logging
+async function compressForWhatsapp(inputPath, outputPath, progressMessage, episodeName) {
+  // Faster compression: H.264, CRF 35, 480p, mono audio, low bitrate, fast preset
+  const cmd = `ffmpeg -y -i "${inputPath}" -c:v libx264 -preset fast -crf 35 -vf scale=480:-2 -b:v 500k -c:a aac -b:a 32k -ac 1 "${outputPath}"`;
+  console.log('Compressing video for WhatsApp (fast preset, H.264)...');
+  return new Promise((resolve, reject) => {
+    const proc = exec(cmd);
+    let startTime = Date.now();
+    let lastPercent = 0;
+    let lastPercentNotified = 0;
+    const notifyStep = 20;
+    let totalSeconds = 0;
+    // Get duration of input video
+    exec(`ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${inputPath}"`, (err, stdout) => {
+      if (!err && stdout) {
+        totalSeconds = parseFloat(stdout.trim());
+      }
+    });
+    proc.stderr?.on('data', async data => {
+      const line = data.toString();
+      // Parse time= from ffmpeg output
+      const timeMatch = line.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+      if (timeMatch && totalSeconds > 0) {
+        const hours = parseInt(timeMatch[1], 10);
+        const minutes = parseInt(timeMatch[2], 10);
+        const seconds = parseFloat(timeMatch[3]);
+        const currentSeconds = hours * 3600 + minutes * 60 + seconds;
+        const percent = ((currentSeconds / totalSeconds) * 100).toFixed(2);
+        const percentInt = Math.floor((currentSeconds / totalSeconds) * 100);
+        const elapsed = ((Date.now() - startTime) / 1000);
+        const eta = ((totalSeconds - currentSeconds) / (currentSeconds / (elapsed || 1)));
+        if (percent !== lastPercent) {
+          process.stdout.write(`\r[Compression] Progress: ${percent}% | Elapsed: ${elapsed.toFixed(1)}s | ETA: ${eta.toFixed(1)}s   `);
+          lastPercent = percent;
+        }
+        // WhatsApp update every 20%
+        if (percentInt >= lastPercentNotified + notifyStep) {
+          lastPercentNotified += notifyStep;
+          if (lastPercentNotified <= 100) {
+            await sendWhatsAppMessage(
+              MY_NUMBER,
+              `[${episodeName}]\n${progressMessage} ${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
+            );
+          }
+        }
+      }
+    });
+    proc.on('close', code => {
+      process.stdout.write('\n');
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`ffmpeg compression exited with code ${code}`));
+      }
+    });
+  });
+}
+
 // --------------------------- Main Workflow ---------------------------------
 (async () => {
+  
   try {
+    // Wait for WhatsApp client to be ready before starting
+    console.log('Initializing WhatsApp client...');
+    await waitForWhatsAppReady();
+    
     const outputDir = path.resolve(out);
     if (!existsSync(outputDir)) await fs.mkdir(outputDir, { recursive: true });
 
     // Create episode-specific folder
-    const episodeName = `${show} ${EP_CODE}`;
     const episodeFolder = path.join(outputDir, episodeName);
     if (!existsSync(episodeFolder)) await fs.mkdir(episodeFolder, { recursive: true });
     console.log((chalk && chalk.green ? chalk.green : x => x)(`Created episode folder: ${episodeFolder}`));
 
-    // 1. Torrent search & download
-    const magnet = await findMagnet();
-    console.log((chalk && chalk.green ? chalk.green : x => x)(`Magnet link found`));
-    const videoPath = await downloadTorrent(magnet, episodeFolder);
-
-    // 2. Subtitles
-    const token = await opensubsLogin();
-    let subObj = await searchSubtitles(token, 'he');
-    let subtitlePath = path.join(episodeFolder, subObj ? subObj.fileName : `${episodeName}.heb.srt`);
-
-    if (subObj) {
-      console.log((chalk && chalk.green ? chalk.green : x => x)(`Hebrew subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
-      await downloadSubtitle(subObj, subtitlePath, token);
+    // Check for existing video files (torrent download)
+    const videoFiles = await fs.readdir(episodeFolder).catch(() => []);
+    const existingVideo = videoFiles.find(file => 
+      /\.(mp4|mkv|avi|mov|wmv|flv)$/i.test(file) && 
+      !file.includes('.hebsub.') && 
+      !file.includes('.whatsapp.')
+    );
+    
+    let videoPath;
+    if (existingVideo) {
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`Skipping torrent download - video file already exists: ${existingVideo}`));
+      videoPath = path.join(episodeFolder, existingVideo);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSkipping torrent download - video file already exists: ${existingVideo}`);
     } else {
-      console.log('Hebrew not found, trying English…');
-      subObj = await searchSubtitles(token, 'en');
-      if (!subObj) {
-        console.log('No English subtitles found either.');
-        throw new Error('No subtitles found');
-      }
-      const engPath = path.join(episodeFolder, subObj.fileName || `${episodeName}.eng.srt`);
-      console.log((chalk && chalk.green ? chalk.green : x => x)(`English subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
-      await downloadSubtitle(subObj, engPath, token);
-      console.log('Translating subtitles…');
-      await translateSRTtoHebrew(engPath, subtitlePath);
+      // 1. Torrent search & download
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSearching torrent...`);
+      const magnet = await findMagnet();
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`Magnet link found`));
+      const downloadTorrentMessage = 'Starting torrent download...';
+      const foundMessageMessage = `[${episodeName}]\n*Magnet link found!*\n${downloadTorrentMessage}`;
+      await sendWhatsAppMessage(MY_NUMBER, foundMessageMessage);
+      videoPath = await downloadTorrent(magnet, episodeFolder, downloadTorrentMessage);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nTorrent download complete!`);
     }
 
-    // 3. Mux subtitles
+    // Check for existing subtitle files
+    const subtitleFiles = await fs.readdir(episodeFolder).catch(() => []);
+    const existingSubtitle = subtitleFiles.find(file => 
+      /\.(srt)$/i.test(file) && 
+      (file.includes('.heb.') || file.includes('.hebsub.'))
+    );
+    
+    let subtitlePath;
+    if (existingSubtitle) {
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`Skipping subtitle download - subtitle file already exists: ${existingSubtitle}`));
+      subtitlePath = path.join(episodeFolder, existingSubtitle);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSkipping subtitle download - subtitle file already exists: ${existingSubtitle}`);
+    } else {
+      // 2. Subtitles
+      const token = await opensubsLogin();
+      let subObj = await searchSubtitles(token, 'he');
+      subtitlePath = path.join(episodeFolder, subObj ? subObj.fileName : `${episodeName}.heb.srt`);
+
+      if (subObj) {
+        console.log((chalk && chalk.green ? chalk.green : x => x)(`Hebrew subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nHebrew subtitles found!`);
+        await downloadSubtitle(subObj, subtitlePath, token);
+      } else {
+        console.log('Hebrew not found, trying English…');
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nHebrew subtitles not found :() searching for English subtitles...`);
+        subObj = await searchSubtitles(token, 'en');
+        if (!subObj) {
+          console.log('No English subtitles found either.');
+          await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nNo subtitles found :(`);
+          throw new Error('No subtitles found');
+        }
+        const engPath = path.join(episodeFolder, subObj.fileName || `${episodeName}.eng.srt`);
+        console.log((chalk && chalk.green ? chalk.green : x => x)(`English subtitles found: ${subObj.fileName} [release: ${subObj.release || ''}]`));
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nEnglish subtitles found!`);
+        await downloadSubtitle(subObj, engPath, token);
+        console.log('Translating subtitles…');
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nTranslating subtitles from english to Hebrew...`);
+        await translateSRTtoHebrew(engPath, subtitlePath);
+      }
+    }
+
+    // Check for existing muxed video
     const outputVideo = path.join(episodeFolder, `${path.parse(videoPath).name}.hebsub.mp4`);
-    await muxSubtitles(videoPath, subtitlePath, outputVideo);
+    if (existsSync(outputVideo)) {
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`Skipping subtitle muxing - muxed video already exists: ${path.basename(outputVideo)}`));
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSkipping subtitle muxing - muxed video already exists: ${path.basename(outputVideo)}`);
+    } else {
+      // 3. Mux subtitles
+      const mergeMessage = `[${episodeName}]\nMerging video and subtitles...`;
+      await sendWhatsAppMessage(MY_NUMBER, mergeMessage);
+      await muxSubtitles(videoPath, subtitlePath, outputVideo, mergeMessage);
+    }
+    
+    await sendWhatsAppMessage(MY_NUMBER, `✅ All done! Files organized in: ${episodeFolder}`);
     console.log((chalk && chalk.green ? chalk.green : x => x)(`✅ All done! Files organized in: ${episodeFolder}`));
+
+    // Check for existing compressed video
+    const compressedPath = path.join(episodeFolder, `${path.parse(videoPath).name}.whatsapp.mp4`);
+    if (existsSync(compressedPath)) {
+      console.log((chalk && chalk.green ? chalk.green : x => x)(`Skipping compression - compressed video already exists: ${path.basename(compressedPath)}`));
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSkipping compression - compressed video already exists: ${path.basename(compressedPath)}`);
+    } else {
+      // 4. Compress for WhatsApp
+      try {
+        const compressMessage = 'Compressing video for WhatsApp...';
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\n${compressMessage}`);
+        await compressForWhatsapp(outputVideo, compressedPath, compressMessage, episodeName);
+      } catch (err) {
+        console.error('Compression error:', err);
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nCompression failed: ${err.message || err}`);
+        throw err;
+      }
+    }
+
+    // Send via WhatsApp (always try to send if compressed file exists)
+    try {
+      const stats = fsSync.statSync(compressedPath);
+      const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+      
+      if (stats.size > 95 * 1024 * 1024) { // WhatsApp limit is ~100MB, use 95MB for safety
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nCompressed file is too big to send on WhatsApp (size: ${fileSizeMB} MB).`);
+      } else {
+        // Add retry logic for WhatsApp media sending
+        let retryCount = 0;
+        const maxRetries = 3;
+        let success = false;
+        
+        while (retryCount < maxRetries && !success) {
+          try {
+            if (retryCount > 0) {
+              console.log(`Retry attempt ${retryCount} for WhatsApp media sending...`);
+              await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nRetry attempt ${retryCount} for sending video...`);
+              // Wait before retry
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+            
+            await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nSending compressed video via WhatsApp (size: ${fileSizeMB} MB)...`);
+            
+            // Check if file still exists and is readable
+            if (!fsSync.existsSync(compressedPath)) {
+              throw new Error('Compressed file no longer exists');
+            }
+            
+            // Check WhatsApp session status before attempting to send
+            const sessionValid = await checkWhatsAppSession();
+            if (!sessionValid && retryCount === 1) {
+              console.log('Session appears invalid, attempting to refresh...');
+              await refreshWhatsAppSession();
+              // Wait for session to be ready again
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            
+            console.log('Creating MessageMedia object...');
+            const media = await MessageMedia.fromFilePath(compressedPath);
+            console.log('MessageMedia created successfully, mimeType:', media.mimetype, 'data length:', media.data.length);
+            
+            // Try different approaches for sending
+            let result;
+            if (retryCount === 0) {
+              // First attempt: standard method
+              console.log('Attempting standard media send...');
+              result = await whatsappClient.sendMessage(`${MY_NUMBER}@c.us`, media, { caption: `[${episodeName}] Compressed video` });
+            } else if (retryCount === 1) {
+              // Second attempt: without caption
+              console.log('Attempting media send without caption...');
+              result = await whatsappClient.sendMessage(`${MY_NUMBER}@c.us`, media);
+            } else {
+              // Third attempt: send as document
+              console.log('Attempting to send as document...');
+              result = await whatsappClient.sendMessage(`${MY_NUMBER}@c.us`, media, { 
+                sendMediaAsDocument: true,
+                caption: `[${episodeName}] Compressed video`
+              });
+            }
+            
+            console.log('WhatsApp media sent successfully:', result.id._serialized);
+            success = true;
+            
+          } catch (sendError) {
+            retryCount++;
+            console.error(`WhatsApp send attempt ${retryCount} failed:`);
+            console.error('Error name:', sendError.name);
+            console.error('Error message:', sendError.message);
+            console.error('Error stack:', sendError.stack);
+            
+            // Try to get more details about the error
+            if (sendError.message && sendError.message.includes('Evaluation failed')) {
+              console.error('This appears to be a browser evaluation error - possible causes:');
+              console.error('- WhatsApp Web session expired');
+              console.error('- File too large or corrupted');
+              console.error('- Network connectivity issues');
+              console.error('- Browser automation timeout');
+            }
+            
+            if (retryCount >= maxRetries) {
+              throw new Error(`Failed to send media after ${maxRetries} attempts. Last error: ${sendError.name}: ${sendError.message}`);
+            }
+            
+            // Wait longer between retries
+            await new Promise(resolve => setTimeout(resolve, 10000));
+          }
+        }
+      }
+    } catch (err) {
+      console.error('WhatsApp send error:', err);
+      await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nWhatsApp sending failed: ${err.message || err}`);
+      
+      // Try to send a fallback message with file info
+      try {
+        const stats = fsSync.statSync(compressedPath);
+        const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+        await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\nVideo file ready but couldn't send via WhatsApp.\nFile: ${path.basename(compressedPath)}\nSize: ${fileSizeMB} MB\nLocation: ${compressedPath}`);
+      } catch (fallbackErr) {
+        console.error('Fallback message also failed:', fallbackErr);
+      }
+    }
   } catch (err) {
     console.error('⛔', err.message);
+    await sendWhatsAppMessage(MY_NUMBER, `[${episodeName}]\n⛔ Error: ${err.message}`);
+    
+    // Add delay to ensure WhatsApp messages are delivered before exiting
+    console.log('Waiting 10 seconds for WhatsApp messages to be delivered...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
+    
     process.exit(1);
+  } finally {
+    // Gracefully close WhatsApp client
+    if (whatsappClient) {
+      console.log('Closing WhatsApp client...');
+      await whatsappClient.destroy();
+    }
+    
+    // Add delay to ensure WhatsApp messages are delivered
+    console.log('Waiting 10 seconds for WhatsApp messages to be delivered...');
+    await new Promise(resolve => setTimeout(resolve, 10000));
   }
 })();
+
+// Graceful shutdown handler
+process.on('SIGINT', async () => {
+  console.log('\nReceived SIGINT, shutting down gracefully...');
+  if (whatsappClient) {
+    await whatsappClient.destroy();
+  }
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\nReceived SIGTERM, shutting down gracefully...');
+  if (whatsappClient) {
+    await whatsappClient.destroy();
+  }
+  process.exit(0);
+});
+
+// Wait for WhatsApp client to be ready
+async function waitForWhatsAppReady(timeout = 30000) {
+    const startTime = Date.now();
+    while (!whatsappReady && (Date.now() - startTime) < timeout) {
+        console.log('Waiting for WhatsApp client to be ready...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    if (!whatsappReady) {
+        console.log('WhatsApp client not ready after timeout, continuing anyway...');
+    }
+    return whatsappReady;
+}
+
+// Check WhatsApp Web session status
+async function checkWhatsAppSession() {
+    try {
+        console.log('Checking WhatsApp Web session status...');
+        // Try to get basic info to test if session is valid
+        const info = await whatsappClient.getState();
+        console.log('WhatsApp session state:', info);
+        return info === 'CONNECTED';
+    } catch (error) {
+        console.error('Error checking WhatsApp session:', error);
+        return false;
+    }
+}
+
+// Refresh WhatsApp Web session if needed
+async function refreshWhatsAppSession() {
+    try {
+        console.log('Attempting to refresh WhatsApp Web session...');
+        await whatsappClient.logout();
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await whatsappClient.initialize();
+        console.log('WhatsApp session refresh initiated');
+        return true;
+    } catch (error) {
+        console.error('Failed to refresh WhatsApp session:', error);
+        return false;
+    }
+}
