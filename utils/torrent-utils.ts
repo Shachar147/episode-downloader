@@ -1,6 +1,6 @@
 import path from 'path';
-// // @ts-ignore
-// const fetch: any = function(...args: any[]) { return import('node-fetch').then(mod => (mod.default || mod)(...args)); };
+// @ts-ignore
+const fetch: any = function(...args: any[]) { return import('node-fetch').then(mod => (mod.default || mod)(...args)); };
 import { sendMessage } from './whatsapp-utils';
 import { formatDuration } from './time-utils';
 

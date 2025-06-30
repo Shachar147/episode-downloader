@@ -15,26 +15,27 @@
  * Usage:
  *   node episode_downloader.js --show "Rick and Morty" --season 8 --episode 5 --out /path/to/output
  */
-const fs = require('node:fs/promises');
-const { existsSync } = require('node:fs');
-const path = require('node:path');
-const { exec } = require('node:child_process');
-const { promisify } = require('node:util');
-const cheerio = require('cheerio');
-const dotenv = require('dotenv');
-const { OpenAI } = require('openai');
-const { program } = require('commander');
+import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
+import cheerio from 'cheerio';
+import dotenv from 'dotenv';
+import { OpenAI } from 'openai';
+import { program } from 'commander';
+import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
+import qrcode from 'qrcode-terminal';
+import fsSync from 'fs';
+
+dotenv.config();
+
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
-const fsSync = require('fs');
 
 let chalk;
 (async () => {
   chalk = (await import('chalk')).default;
 })();
-
-dotenv.config();
 
 // uncomment if there are login problems to verify script managed to read your credentials
 // console.log('OS_API_USER:', process.env.OS_API_USER, 'OS_API_PASS:', process.env.OS_API_PASS);
@@ -46,7 +47,13 @@ const OPEN_SUBTITLES_API_KEY = OS_API_KEY || 'rlF1xGalT47V4qYxdgSLR2GFTO3Cool8';
 const OPEN_SUBTITLES_USER_AGENT = 'MyDownloader/1.0';
 
 // --------------------------- WhatsApp Integration --------------------------
-const whatsappClient = new Client({ authStrategy: new LocalAuth() });
+const whatsappClient = new Client({ 
+    authStrategy: new LocalAuth(),
+    puppeteer: {
+        executablePath: process.env.CHROME_EXECUTABLE_PATH,
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    }
+});
 let whatsappReady = false;
 let messageQueue = [];
 
@@ -58,7 +65,6 @@ whatsappClient.on('qr', qr => {
 whatsappClient.on('ready', () => {
     whatsappReady = true;
     console.log('WhatsApp client is ready!');
-    // Send any queued messages
     for (const { number, message } of messageQueue) {
         whatsappClient.sendMessage(`${number}@c.us`, message);
     }
@@ -74,12 +80,10 @@ whatsappClient.on('disconnected', () => {
     whatsappReady = false;
 });
 
-// Initialize WhatsApp client
 whatsappClient.initialize();
 
 async function sendWhatsAppMessage(number, message) {
     if (!whatsappReady) {
-        // Queue the message to send when ready
         messageQueue.push({ number, message });
         console.log('WhatsApp client not ready yet. Queuing message:', message);
         return;
@@ -159,8 +163,7 @@ async function findMagnet() {
 
 async function downloadTorrent(magnet, outputDir, downloadTorrentMessage) {
   console.log((chalk && chalk.green ? chalk.green : x => x)(`Starting torrent download…`));
-  let WebTorrent;
-  WebTorrent = (await import('webtorrent')).default;
+  const WebTorrent = (await import('webtorrent')).default;
   const client = new WebTorrent();
   return new Promise((resolve, reject) => {
     client.add(magnet, { path: outputDir }, torrent => {

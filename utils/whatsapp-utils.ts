@@ -1,5 +1,6 @@
 import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
-const qrcode = require('qrcode-terminal');
+// @ts-ignore
+import qrcode from 'qrcode-terminal';
 import fs from 'fs';
 import fsSync from 'fs';
 import { getFileInfo, isFileLargerThan } from './file-utils';

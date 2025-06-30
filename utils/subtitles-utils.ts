@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
-// // @ts-ignore
-// const fetch: any = function(...args: any[]) { return import('node-fetch').then(mod => (mod.default || mod)(...args)); };
+// @ts-ignore
+const fetch: any = function(...args: any[]) { return import('node-fetch').then(mod => (mod.default || mod)(...args)); };
 import { OpenAI } from 'openai';
 import { formatDuration } from './time-utils';
 
