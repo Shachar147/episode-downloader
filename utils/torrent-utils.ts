@@ -102,7 +102,7 @@ export async function downloadTorrent(
         if (percentInt >= lastPercentNotified + notifyStep) {
           lastPercentNotified += notifyStep;
           if (lastPercentNotified <= 100) {
-            await sendMessage(`Downloading... ${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
+            await sendMessage(`${video.name}\n\nDownloading...\n${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
             );
           }
         }
