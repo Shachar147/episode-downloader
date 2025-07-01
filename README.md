@@ -14,6 +14,7 @@ This script simplifies the process of downloading TV series episodes, fetching H
 - **WebTorrent** (npm module, installed automatically)
 - **OpenAI API key** (for subtitle translation, if needed)
 - **OpenSubtitles account** (for subtitle downloads)
+- **WhatsApp account** (for notifications, optional)
 
 ## ⚙️ Setup
 1. **Clone this repository**
@@ -26,7 +27,8 @@ This script simplifies the process of downloading TV series episodes, fetching H
    OS_API_USER=your_opensubtitles_username
    OS_API_PASS=your_opensubtitles_password
    OS_API_KEY=your_opensubtitles_api_key
-   OPENAI_API_KEY=your_openai_api_key # (for translation)
+   OPENAI_API_KEY=your_openai_api_key # (for translation of eng subtitles to hebrew)
+   MY_WHATSAPP_NUMBER=your_whatsapp_phone_number # (for WhatsApp notifications, country code, no plus sign for example - 972501234567)
    ```
 
 ### 🔑 How to get your OpenSubtitles API Key
@@ -75,3 +77,52 @@ node episode_downloader.js --show "Rick and Morty" --season 1 --episode 1 --out 
 ---
 
 Enjoy your automated TV experience! 🍿
+
+### 📲 WhatsApp Notifications
+
+If you set `MY_WHATSAPP_NUMBER` in your `.env`, the script will send you real-time updates about the download and processing steps via WhatsApp (using WhatsApp Web). 
+
+On first run, you'll need to scan a QR code in your terminal to connect your WhatsApp account. 
+The script will wait for the WhatsApp client to be ready before proceeding with the download.
+
+**Example notifications:**
+- Started search for episode
+- Magnet link found
+- Torrent download started/completed
+- Subtitles found/translated
+- Muxing started/completed
+- Errors
+
+> **Note:** Your computer must stay online and logged in to WhatsApp Web for notifications to work.
+
+## 🔧 Troubleshooting
+
+### WhatsApp Web Issues
+
+If WhatsApp notifications stop working or you encounter connection errors:
+
+1. **Clear WhatsApp session data:**
+   ```sh
+   rm -rf .wwebjs_auth
+   rm -rf .wwebjs_cache
+   ```
+
+2. **Disconnect linked devices from WhatsApp:**
+   - Open WhatsApp on your phone
+   - Go to **Settings** → **Linked Devices**
+   - Remove any existing WhatsApp Web sessions
+
+3. **Restart the script:**
+   ```sh
+   npm run download:rick
+   ```
+
+4. **Scan the QR code again** when prompted
+
+This should resolve most WhatsApp Web connection issues.
+
+### Other Common Issues
+
+- **"Bad CPU type in executable"**: You're running Intel binaries on Apple Silicon. Install ARM64 versions of Node.js and FFmpeg.
+- **FFmpeg not found**: Install FFmpeg via Homebrew: `brew install ffmpeg`
+- **Compression errors**: Check that the input video file exists and is not corrupted.
