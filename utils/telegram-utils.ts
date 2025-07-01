@@ -18,10 +18,8 @@ export async function sendTelegramMessage(message: string): Promise<void> {
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) throw new Error('TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set');
 
-//   // Log the message and parameters before sending
-//   console.log('[Telegram] Sending message:', message);
-//   console.log('[Telegram] Using chatId:', chatId);
-//   console.log('[Telegram] Using token:', token ? token.slice(0, 10) + '...' : '');
+  // Log the message and parameters before sending
+  console.log('[Telegram] Sending message:', message);
 
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
   const res = await fetch(url, {
