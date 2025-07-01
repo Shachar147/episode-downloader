@@ -9,14 +9,20 @@ This script simplifies the process of downloading TV series episodes, fetching H
 - Automatically fetch Hebrew subtitles (or English and translate to Hebrew)
 - Mux subtitles into the video using FFmpeg
 - Easy to use from the command line
+- Accepts notifications via WhatsApp or Telegram
+- If MESSAGE_TUNNEL is set to telegram, you can send search requests directly to the bot (e.g., `Rick and Morty S08E01`)
 
 ## 🛠️ Prerequisites
 - **Node.js** ≥ 18
 - **FFmpeg** installed and in your PATH
-- **WebTorrent** (npm module, installed automatically)
-- **OpenAI API key** (for subtitle translation, if needed)
 - **OpenSubtitles account** (for subtitle downloads)
-- **WhatsApp account** (for notifications, optional)
+- **OpenAI API key** (for subtitle translation, if needed)
+- **Notifications prerequisites**:
+   - **Telegram (notifications + live search)**:
+      - Telegram account
+      - Telegram bot (token and chat id)
+   - **WhatsApp (notifications only)**:
+      - WhatsApp account
 
 ## ⚙️ Setup
 1. **Clone this repository**
@@ -40,7 +46,8 @@ This script simplifies the process of downloading TV series episodes, fetching H
    TELEGRAM_CHAT_ID=your_telegram_chat_id
    ```
 
-### 🔑 How to get your OpenSubtitles API Key
+### 🔑&nbsp; Get your OpenSubtitles API Key
+---
 1. Register or log in at [OpenSubtitles.com](https://www.opensubtitles.com/)
 2. Go to your profile or account settings
 3. Find the **API Key** section and generate/copy your API key
@@ -48,7 +55,10 @@ This script simplifies the process of downloading TV series episodes, fetching H
 
 > **Note:** You must use your OpenSubtitles **username** (not email) and password for `OS_API_USER` and `OS_API_PASS`.
 
-### 🤖 How to get your OpenAI API Key (for subtitle translation)
+---
+
+### 🤖&nbsp; Get your OpenAI API Key (for subtitle translation)
+---
 1. Sign up or log in at [OpenAI Platform](https://platform.openai.com/signup)
 2. Go to your [API keys page](https://platform.openai.com/api-keys)
 3. Click **"Create new secret key"** and copy the key
@@ -58,7 +68,10 @@ This script simplifies the process of downloading TV series episodes, fetching H
    ```
 5. **Free credits:** New accounts get some free credits, but usage is not unlimited. See [OpenAI Pricing](https://openai.com/pricing) for details.
 
-### 🟦 How to get your Telegram Bot Token and Chat ID
+---
+
+### 🟦&nbsp; Get your Telegram Bot Token and Chat ID
+---
 1. **Create a bot with [@BotFather](https://t.me/botfather) on Telegram:**
    - Send `/newbot` and follow the instructions to get your bot token.
 2. **Get your chat ID (must be your own user or group chat, NOT the bot's ID!):**
@@ -73,13 +86,8 @@ This script simplifies the process of downloading TV series episodes, fetching H
    TELEGRAM_CHAT_ID=1801579986  # <-- your user or group chat ID, not the bot's ID!
    ```
 
+---
 ## 📝 Usage
-
-```sh
-node episode_downloader.js --show "Rick and Morty" --season 8 --episode 5 \
-    --out /path/to/output
-```
-
 - `--show`      TV show title (e.g., "Rick and Morty")
 - `--season`    Season number
 - `--episode`   Episode number
@@ -118,6 +126,8 @@ The script will wait for the WhatsApp client to be ready before proceeding with 
 - Errors
 
 > **Note:** Your computer must stay online and logged in to WhatsApp Web for notifications to work.
+
+----
 
 ## 🔧 Troubleshooting
 
