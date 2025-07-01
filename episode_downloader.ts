@@ -5,15 +5,15 @@ dotenv.config();
 import path from 'path';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
-import fsSync from 'fs';
 import { program } from 'commander';
 import { muxSubtitles } from './utils/merge-utils';
 import { compressForWhatsapp } from './utils/compress-utils';
-import { waitForWhatsAppReady, whatsappClient, sendVideoViaWhatsApp, sendMessage as sendMessageFunc } from './utils/whatsapp-utils';
+import { waitForWhatsAppReady, whatsappClient, sendMessage as sendMessageFunc } from './utils/whatsapp-utils';
+import { sendMessage as sendTelegramMessage } from './utils/telegram-utils';
 import { downloadTorrent, findMagnet } from './utils/torrent-utils';
 import { downloadSubtitle, opensubsLogin, searchSubtitles, translateSRTtoHebrew } from './utils/subtitles-utils';
 import { formatFileName, getFileInfo } from './utils/file-utils';
-import { MessageMedia } from 'whatsapp-web.js';
+import { MESSAGE_TUNNEL, MessageTunnel } from './utils/messaging-utils';
 
 const MY_NUMBER = process.env.MY_WHATSAPP_NUMBER;
 
@@ -30,7 +30,13 @@ const { show, season, episode, out, minSeeds } = options;
 const EP_CODE = `s${String(season).padStart(2, '0')}e${String(episode).padStart(2, '0')}`;
 const episodeName = `${show} ${EP_CODE}`;
 
-const sendMessage = async (message:string) => MY_NUMBER && await sendMessageFunc(MY_NUMBER, episodeName, message);
+const sendMessage = async (message:string) => {
+  if (MESSAGE_TUNNEL === MessageTunnel.WHATSAPP) {
+    await sendMessageFunc(MY_NUMBER, episodeName, message)
+  } else {
+    await sendTelegramMessage(episodeName, message);
+  }
+};
 
 async function setupDirectories(): Promise<string> {
   const outputDir = path.resolve(out);
@@ -134,7 +140,9 @@ async function handleCompression(videoPath: string, outputVideo: string, episode
 
 async function main(): Promise<void> {
   try {
-    await waitForWhatsAppReady();
+    if (MESSAGE_TUNNEL === MessageTunnel.WHATSAPP) {
+      await waitForWhatsAppReady();
+    }
     
     // Step 1: Setup directories
     const episodeFolder = await setupDirectories();
@@ -170,8 +178,10 @@ async function main(): Promise<void> {
     // }
     
     // Add delay to ensure WhatsApp messages are delivered
-    console.log('Waiting 10 seconds for WhatsApp messages to be delivered...');
-    await new Promise(resolve => setTimeout(resolve, 10000));
+    if (MESSAGE_TUNNEL === MessageTunnel.WHATSAPP) {
+      console.log('Waiting 10 seconds for WhatsApp messages to be delivered...');
+      await new Promise(resolve => setTimeout(resolve, 10000));
+    }
   }
 }
 
