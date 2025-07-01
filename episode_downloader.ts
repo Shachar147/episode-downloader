@@ -156,7 +156,7 @@ async function main(): Promise<void> {
     await sendMessage(`✅ All done!\n\n📁 Final file: ${formatFileName(finalFileInfo.name)}\n📊 Size: ${finalFileInfo.size}\n📂 Location: ${episodeFolder}`);
     
     // Step 7: Send video via WhatsApp
-    await sendVideoViaWhatsApp(compressedPath, episodeName, MY_NUMBER || '');
+    // await sendVideoViaWhatsApp(compressedPath, episodeName, MY_NUMBER || '');
     
   } catch (err: any) {
     await sendMessage(`⛔ Error: ${err.message}`);
