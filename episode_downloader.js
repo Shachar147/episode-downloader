@@ -50,7 +50,7 @@ const OPEN_SUBTITLES_USER_AGENT = 'MyDownloader/1.0';
 const whatsappClient = new Client({ 
     authStrategy: new LocalAuth(),
     puppeteer: {
-        executablePath: process.env.CHROME_EXECUTABLE_PATH,
+        executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
         args: ['--no-sandbox', '--disable-setuid-sandbox']
     }
 });
