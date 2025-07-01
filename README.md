@@ -2,7 +2,7 @@
 
 This script simplifies the process of downloading TV series episodes, fetching Hebrew subtitles (or translating them if needed), and muxing them together into a single video file! 🎬✨
 
-<video src="demo.mp4" controls width="200">Your browser does not support the video tag.</video>
+![Demo](demo.gif)]
 
 ## 🚀 Features
 - Search and download TV episodes via torrent
