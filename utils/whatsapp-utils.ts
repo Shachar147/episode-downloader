@@ -5,6 +5,7 @@ import fs from 'fs';
 import fsSync from 'fs';
 import { getFileInfo, isFileLargerThan } from './file-utils';
 import { COMPRESSION_THRESHOLD_MB } from './compress-utils';
+import { MessageTunnel } from './message-service';
 
 // Use a persistent session folder for WhatsApp authentication
 // Do NOT delete the .wwebjs_auth folder if you want to keep your session and avoid scanning the QR code every time
@@ -124,8 +125,12 @@ async function initializeWhatsApp() {
   whatsappClient.initialize();
 }
 
-// Start the initialization
-initializeWhatsApp();
+const MESSAGE_TUNNEL = (process.env.MESSAGE_TUNNEL as MessageTunnel) || MessageTunnel.TELEGRAM;
+
+// Start the initialization only if tunnel is whatsapp
+if (MESSAGE_TUNNEL === MessageTunnel.WHATSAPP) {
+  initializeWhatsApp();
+}
 
 export const sendMessage = async (MY_NUMBER: string | undefined, episodeName: string, message:string) => MY_NUMBER && await sendWhatsAppMessage(MY_NUMBER, `*[${episodeName}]*\n${message}`);
 
@@ -145,6 +150,14 @@ export async function sendWhatsAppMessage(number: string, message: string): Prom
         console.error('Error details:', error);
         throw error;
     }
+}
+
+export async function sendWhatsAppMessageToMyNumber(message: string): Promise<any> {
+  const MY_NUMBER = process.env.MY_WHATSAPP_NUMBER;
+  if (!MY_NUMBER) {
+    throw new Error('MY_WHATSAPP_NUMBER is not set in environment variables');
+  }
+  return await sendWhatsAppMessage(MY_NUMBER, message);
 }
 
 export async function waitForWhatsAppReady(timeout = 60000): Promise<boolean> {

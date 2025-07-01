@@ -1,9 +1,9 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { sendMessage } from './whatsapp-utils';
 import { formatDuration } from './time-utils';
 import { getFileSizeMB, isFileLargerThan } from './file-utils';
 import fs from 'fs';
+import { sendMessage } from './messaging-utils';
 
 const execAsync = promisify(exec);
 
@@ -37,7 +37,7 @@ export async function compressForWhatsapp(
   // Check if compression is needed
   if (!needsCompression(inputPath)) {
     const inputFileInfo = getFileSizeMB(inputPath);
-    await sendMessage(MY_NUMBER, episodeName, `File size (${inputFileInfo}) is under ${COMPRESSION_THRESHOLD_MB}MB, skipping compression`);
+    await sendMessage(`File size (${inputFileInfo}) is under ${COMPRESSION_THRESHOLD_MB}MB, skipping compression`);
     // Copy the file instead of compressing
     const copyCmd = `cp "${inputPath}" "${outputPath}"`;
     console.log(`File size under ${COMPRESSION_THRESHOLD_MB}MB, copying without compression...`);
@@ -98,8 +98,6 @@ export async function compressForWhatsapp(
           lastPercentNotified += notifyStep;
           if (lastPercentNotified <= 100) {
             await sendMessage(
-              MY_NUMBER,
-              episodeName,
               `${progressMessage}\n(${lastPercentNotified}%, Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)}, Size: ${currentFileSize})`
             );
           }

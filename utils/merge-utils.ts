@@ -1,9 +1,9 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { sendMessage } from './whatsapp-utils';
 import { formatDuration } from './time-utils';
 import { getFileSizeMB } from './file-utils';
 import fs from 'fs';
+import { sendMessage } from './messaging-utils';
 
 const execAsync = promisify(exec);
 
@@ -62,7 +62,7 @@ export async function muxSubtitles(
         if (percentInt >= lastPercentNotified + notifyStep) {
           lastPercentNotified += notifyStep;
           if (lastPercentNotified <= 100) {
-            await sendMessage(MY_NUMBER, episodeName,
+            await sendMessage(
               `${mergeMessage}\n(${lastPercentNotified}% ,Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)}, Size: ${currentFileSize})`
             );
           }

@@ -2,6 +2,8 @@
 
 This script simplifies the process of downloading TV series episodes, fetching Hebrew subtitles (or translating them if needed), and muxing them together into a single video file! 🎬✨
 
+![Demo](demo.gif)
+
 ## 🚀 Features
 - Search and download TV episodes via torrent
 - Automatically fetch Hebrew subtitles (or English and translate to Hebrew)
@@ -29,6 +31,13 @@ This script simplifies the process of downloading TV series episodes, fetching H
    OS_API_KEY=your_opensubtitles_api_key
    OPENAI_API_KEY=your_openai_api_key # (for translation of eng subtitles to hebrew)
    MY_WHATSAPP_NUMBER=your_whatsapp_phone_number # (for WhatsApp notifications, country code, no plus sign for example - 972501234567)
+   
+   # Messaging tunnel: telegram or whatsapp
+   MESSAGE_TUNNEL=telegram
+   
+   # Telegram bot integration
+   TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+   TELEGRAM_CHAT_ID=your_telegram_chat_id
    ```
 
 ### 🔑 How to get your OpenSubtitles API Key
@@ -48,6 +57,21 @@ This script simplifies the process of downloading TV series episodes, fetching H
    OPENAI_API_KEY=sk-...
    ```
 5. **Free credits:** New accounts get some free credits, but usage is not unlimited. See [OpenAI Pricing](https://openai.com/pricing) for details.
+
+### 🟦 How to get your Telegram Bot Token and Chat ID
+1. **Create a bot with [@BotFather](https://t.me/botfather) on Telegram:**
+   - Send `/newbot` and follow the instructions to get your bot token.
+2. **Get your chat ID (must be your own user or group chat, NOT the bot's ID!):**
+   - Start a chat with your bot from your personal Telegram account (not from another bot).
+   - Send any message to your bot.
+   - Visit `https://api.telegram.org/bot<YourBOTToken>/getUpdates` in your browser after sending a message to your bot.
+   - Look for `chat":{"id":...` in the JSON response; that's your chat ID. It should be a number associated with your user or group, **not the bot's ID**.
+   - **If you use the bot's own ID, you will get an error: `Forbidden: bots can't send messages to bots`.**
+3. **Copy these values into your `.env` file, example:**
+   ```env
+   TELEGRAM_BOT_TOKEN=7872878394:AAGKcrvsqZaPBMSbAYbDs6QXsYVMAvRWDvs
+   TELEGRAM_CHAT_ID=1801579986  # <-- your user or group chat ID, not the bot's ID!
+   ```
 
 ## 📝 Usage
 
