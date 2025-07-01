@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 const fetch: any = function(...args: any[]) { return import('node-fetch').then(mod => (mod.default || mod)(...args)); };
 import { OpenAI } from 'openai';
 import { formatDuration } from './time-utils';
+import { formatFileName } from './file-utils';
 
 let chalkInstance: any;
 async function getChalk() {
@@ -111,7 +112,7 @@ export async function translateSRTtoHebrew(srcPath: string, destPath: string): P
   const startTime = Date.now();
   let lastPercent = 0;
   const chalk = await getChalk();
-  console.log(chalk.green(`Translating file: ${destPath}`));
+  console.log(chalk.green(`Translating file: ${formatFileName(destPath)}`));
   for (let i = 0; i < chunks.length; i++) {
     const chunkText = chunks[i].join('\n\n');
     const response = await openai.chat.completions.create({

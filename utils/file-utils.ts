@@ -86,3 +86,7 @@ export const isFileLargerThan = (filePath: string, maxSizeMB: number): boolean =
     return false;
   }
 }; 
+
+export const formatFileName = (filePath:string): string => {
+  return filePath.replace("EZTVx.to", "EZTVx . to");
+}

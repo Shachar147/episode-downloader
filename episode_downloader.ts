@@ -12,7 +12,7 @@ import { compressForWhatsapp } from './utils/compress-utils';
 import { waitForWhatsAppReady, whatsappClient, sendVideoViaWhatsApp, sendMessage as sendMessageFunc } from './utils/whatsapp-utils';
 import { downloadTorrent, findMagnet } from './utils/torrent-utils';
 import { downloadSubtitle, opensubsLogin, searchSubtitles, translateSRTtoHebrew } from './utils/subtitles-utils';
-import { getFileInfo } from './utils/file-utils';
+import { formatFileName, getFileInfo } from './utils/file-utils';
 import { MessageMedia } from 'whatsapp-web.js';
 
 const MY_NUMBER = process.env.MY_WHATSAPP_NUMBER;
@@ -52,14 +52,14 @@ async function handleVideoDownload(episodeFolder: string): Promise<string> {
   if (existingVideo) {
     videoPath = path.join(episodeFolder, existingVideo || '');
     const fileInfo = getFileInfo(videoPath);
-    await sendMessage(`Skipping torrent download -\nVideo file already exists:\n\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}`);
+    await sendMessage(`Skipping torrent download -\nVideo file already exists:\n\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
   } else {
     await sendMessage(`Searching torrent...`);
     const magnet = await findMagnet(show, EP_CODE, minSeeds);
     await sendMessage(`*Magnet link found!*\nStarting torrent download...`);
     videoPath = await downloadTorrent(magnet, episodeFolder, 'Starting torrent download...', MY_NUMBER || '', episodeName);
     const fileInfo = getFileInfo(videoPath);
-    await sendMessage(`Torrent download complete!\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}`);
+    await sendMessage(`Torrent download complete!\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
   }
   return videoPath;
 }
@@ -68,7 +68,7 @@ async function handleSubtitles(episodeFolder: string): Promise<string> {
   const subtitleFiles = await fs.readdir(episodeFolder).catch(() => []);
   const existingSubtitle = subtitleFiles.find(file =>
     /\.(srt)$/i.test(file) &&
-    (file.includes('.heb.') || file.includes('.hebsub.'))
+    (file.toLocaleLowerCase().includes('heb'))
   );
   
   let subtitlePath: string;
@@ -83,7 +83,7 @@ async function handleSubtitles(episodeFolder: string): Promise<string> {
       await sendMessage(`Hebrew subtitles found!`);
       await downloadSubtitle(subObj, subtitlePath, token);
     } else {
-      await sendMessage(`Hebrew subtitles not found :() searching for English subtitles...`);
+      await sendMessage(`Hebrew subtitles not found :(\nSearching for English subtitles...`);
       subObj = await searchSubtitles(token, 'en', show, season, episode);
       if (!subObj) {
         await sendMessage(`No subtitles found :(`);
@@ -108,7 +108,7 @@ async function handleMuxing(videoPath: string, subtitlePath: string, episodeFold
     await sendMessage(mergeMessage);
     await muxSubtitles(videoPath || '', subtitlePath || '', outputVideo, mergeMessage, MY_NUMBER || '', episodeName);
     const fileInfo = getFileInfo(outputVideo);
-    await sendMessage(`Merge completed:\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}`);
+    await sendMessage(`Merge completed:\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
   }
   return outputVideo;
 }
@@ -123,7 +123,7 @@ async function handleCompression(videoPath: string, outputVideo: string, episode
       await sendMessage(`${compressMessage}`);
       await compressForWhatsapp(outputVideo, compressedPath, compressMessage, episodeName, MY_NUMBER || '');
       const fileInfo = getFileInfo(compressedPath);
-      await sendMessage(`Compression completed:\n📁 File: ${fileInfo.name}\n📊 Size: ${fileInfo.size}`);
+      await sendMessage(`Compression completed:\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
     } catch (err: any) {
       await sendMessage(`Compression failed: ${err.message || err}`);
       throw err;
@@ -153,7 +153,7 @@ async function main(): Promise<void> {
     
     // Step 6: Send completion message with final file info
     const finalFileInfo = getFileInfo(compressedPath);
-    await sendMessage(`✅ All done!\n\n📁 Final file: ${finalFileInfo.name}\n📊 Size: ${finalFileInfo.size}\n📂 Location: ${episodeFolder}`);
+    await sendMessage(`✅ All done!\n\n📁 Final file: ${formatFileName(finalFileInfo.name)}\n📊 Size: ${finalFileInfo.size}\n📂 Location: ${episodeFolder}`);
     
     // Step 7: Send video via WhatsApp
     await sendVideoViaWhatsApp(compressedPath, episodeName, MY_NUMBER || '');
