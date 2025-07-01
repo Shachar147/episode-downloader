@@ -14,6 +14,7 @@ import { downloadTorrent, findMagnet } from './utils/torrent-utils';
 import { downloadSubtitle, opensubsLogin, searchSubtitles, translateSRTtoHebrew } from './utils/subtitles-utils';
 import { formatFileName, getFileInfo } from './utils/file-utils';
 import { MESSAGE_TUNNEL, MessageTunnel } from './utils/messaging-utils';
+import TelegramBot from 'node-telegram-bot-api';
 
 const MY_NUMBER = process.env.MY_WHATSAPP_NUMBER;
 
@@ -21,7 +22,7 @@ class EpisodeDownloader {
   show: string;
   season: number;
   episode: number;
-  out: string = '~/Videos';
+  out: string = '~/Videos/';
   minSeeds: number = 20;
   epCode: string;
   episodeName: string;
@@ -71,9 +72,9 @@ class EpisodeDownloader {
       await this.sendMessage(`Skipping torrent download -\nVideo file already exists:\n\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
     } else {
       await this.sendMessage(`Searching torrent...`);
-      const magnet = await findMagnet(show, this.epCode, this.minSeeds);
-      await this.sendMessage(`*Magnet link found!*\nStarting torrent download...`);
-      videoPath = await downloadTorrent(magnet, episodeFolder, 'Starting torrent download...', MY_NUMBER || '', this.episodeName);
+      const magnet = await findMagnet(this.show, this.epCode, this.minSeeds);
+      await this.sendMessage(`*Magnet link found!*`);
+      videoPath = await downloadTorrent(magnet, episodeFolder, '*Starting torrent download...*', this.episodeName);
       const fileInfo = getFileInfo(videoPath);
       await this.sendMessage(`Torrent download complete!\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
     }
@@ -93,14 +94,14 @@ class EpisodeDownloader {
       await this.sendMessage(`Skipping subtitle download - \nSubtitle file already exists: \n\n${existingSubtitle || ''}`);
     } else {
       const token = await opensubsLogin();
-      let subObj = await searchSubtitles(token, 'he', show, season, episode);
+      let subObj = await searchSubtitles(token, 'he', this.show, this.season, this.episode);
       subtitlePath = path.join(episodeFolder, subObj && subObj.fileName ? subObj.fileName : `${this.episodeName}.heb.srt`);
       if (subObj) {
         await this.sendMessage(`Hebrew subtitles found!`);
         await downloadSubtitle(subObj, subtitlePath, token);
       } else {
         await this.sendMessage(`Hebrew subtitles not found :(\nSearching for English subtitles...`);
-        subObj = await searchSubtitles(token, 'en', show, season, episode);
+        subObj = await searchSubtitles(token, 'en', this.show, this.season, this.episode);
         if (!subObj) {
           await this.sendMessage(`No subtitles found :(`);
           throw new Error('No subtitles found');
@@ -167,10 +168,10 @@ class EpisodeDownloader {
       const outputVideo = await this.handleMuxing(videoPath, subtitlePath, episodeFolder);
       
       // Step 5: Handle compression
-      const compressedPath = await this.handleCompression(videoPath, outputVideo, episodeFolder);
+      // const compressedPath = await this.handleCompression(videoPath, outputVideo, episodeFolder);
       
       // Step 6: Send completion message with final file info
-      const finalFileInfo = getFileInfo(compressedPath);
+      const finalFileInfo = getFileInfo(outputVideo);
       await this.sendMessage(`✅ All done!\n\n📁 Final file: ${formatFileName(finalFileInfo.name)}\n📊 Size: ${finalFileInfo.size}\n📂 Location: ${episodeFolder}`);
       
       // Step 7: Send video via WhatsApp
@@ -179,7 +180,7 @@ class EpisodeDownloader {
     } catch (err: any) {
       await this.sendMessage(`⛔ Error: ${err.message}`);
       await new Promise(resolve => setTimeout(resolve, 10000));
-      process.exit(1);
+      // process.exit(1);
     } finally {
       // // Gracefully close WhatsApp client
       // if (whatsappClient) {
@@ -214,14 +215,55 @@ process.on('SIGTERM', async () => {
 });
 
 // Start the application
-program
-  .requiredOption('--show <title>', 'Show title, e.g., "Rick and Morty"')
-  .requiredOption('--season <number>', 'Season number', parseInt)
-  .requiredOption('--episode <number>', 'Episode number', parseInt)
-  .option('--out <dir>', 'Output directory', '.')
-  .option('--min-seeds <n>', 'Minimum seeders', parseInt, 20)
-  .parse();
+if (MESSAGE_TUNNEL === MessageTunnel.WHATSAPP) {
+  program
+    .requiredOption('--show <title>', 'Show title, e.g., "Rick and Morty"')
+    .requiredOption('--season <number>', 'Season number', parseInt)
+    .requiredOption('--episode <number>', 'Episode number', parseInt)
+    .option('--out <dir>', 'Output directory', '.')
+    .option('--min-seeds <n>', 'Minimum seeders', parseInt, 20)
+    .parse();
+} else {
+  program
+    .option('--show <title>', 'Show title, e.g., "Rick and Morty"')
+    .option('--season <number>', 'Season number', parseInt)
+    .option('--episode <number>', 'Episode number', parseInt)
+    .option('--out <dir>', 'Output directory', '.')
+    .option('--min-seeds <n>', 'Minimum seeders', parseInt, 20)
+    .parse();
+}
 
-  const options = program.opts();
-  const { show, season, episode, out, minSeeds } = options;
-void new EpisodeDownloader(show, season, episode, out, minSeeds).run();
+const options = program.opts();
+const { show, season, episode, out, minSeeds } = options;
+
+if (MESSAGE_TUNNEL === MessageTunnel.WHATSAPP) {
+  void new EpisodeDownloader(show, season, episode, out, minSeeds).run();
+} else if (MESSAGE_TUNNEL === MessageTunnel.TELEGRAM) {
+  if (show && season && episode) {
+    void new EpisodeDownloader(show, season, episode, out, minSeeds).run();
+  }
+}
+
+function listenForTelegramEpisodeRequests() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) throw new Error('TELEGRAM_BOT_TOKEN is not set in environment variables');
+  const bot = new TelegramBot(token, { polling: true });
+  const pattern = /^(.+?)\s+[sS](\d{2})[eE](\d{2})$/i;
+
+  bot.on('message', async (msg) => {
+    if (!msg.text) return;
+    const match = msg.text.trim().match(pattern);
+    if (!match) return; // ignore messages that aren't on the right format
+    const show = match[1].trim();
+    const season = parseInt(match[2], 10);
+    const episode = parseInt(match[3], 10);
+    await bot.sendMessage(msg.chat.id, `Looking for downloads for "${show}", Season ${season}, Episode ${episode}...`);
+    const downloader = new EpisodeDownloader(show, season, episode, '/Users/shacharratzabi/Videos/');
+    await downloader.run();
+  });
+}
+
+if (MESSAGE_TUNNEL === MessageTunnel.TELEGRAM && process.argv.length <= 2) {
+  console.log('Listening for Telegram episode requests...');
+  listenForTelegramEpisodeRequests();
+}

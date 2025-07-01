@@ -1,8 +1,8 @@
 import path from 'path';
 // @ts-ignore
 const fetch: any = function(...args: any[]) { return import('node-fetch').then(mod => (mod.default || mod)(...args)); };
-import { sendMessage } from './whatsapp-utils';
 import { formatDuration } from './time-utils';
+import { sendMessage } from './messaging-utils';
 
 let WebTorrentClass: any;
 async function getWebTorrent() {
@@ -66,7 +66,6 @@ export async function downloadTorrent(
   magnet: string,
   outputDir: string,
   downloadTorrentMessage: string,
-  MY_NUMBER: string,
   episodeName: string
 ): Promise<string> {
   const chalk = await getChalk();
@@ -75,7 +74,7 @@ export async function downloadTorrent(
   const client = new WebTorrent();
   return new Promise((resolve, reject) => {
     // @ts-ignore: WebTorrent typings may not match actual usage
-    client.add(magnet, { path: outputDir }, (torrent: any) => {
+    client.add(magnet, { path: outputDir }, async (torrent: any) => {
       console.log('Torrent files:', torrent.files.map((f: any) => f.name));
       const video = torrent.files.find((file: any) =>
         file.name.match(/\.(mp4|mkv|avi|mov|wmv|flv)$/i)
@@ -85,6 +84,8 @@ export async function downloadTorrent(
         reject(new Error('No video file found in the torrent.'));
         return;
       }
+      await sendMessage(`${downloadTorrentMessage}\n\n 📁 File: ${video.name}`);
+
       const startTime = Date.now();
       let lastLogged = '';
       let lastPercentNotified = 0;
@@ -101,8 +102,7 @@ export async function downloadTorrent(
         if (percentInt >= lastPercentNotified + notifyStep) {
           lastPercentNotified += notifyStep;
           if (lastPercentNotified <= 100) {
-            await sendMessage(MY_NUMBER, episodeName, 
-              `${downloadTorrentMessage} ${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
+            await sendMessage(`Downloading... ${lastPercentNotified}% (Elapsed: ${formatDuration(elapsed)}, ETA: ${formatDuration(eta)})`
             );
           }
         }

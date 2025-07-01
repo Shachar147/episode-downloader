@@ -1,9 +1,9 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { sendMessage } from './message-service';
 import { formatDuration } from './time-utils';
 import { getFileSizeMB, isFileLargerThan } from './file-utils';
 import fs from 'fs';
+import { sendMessage } from './messaging-utils';
 
 const execAsync = promisify(exec);
 
