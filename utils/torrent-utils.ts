@@ -62,6 +62,24 @@ export async function findMagnet(show: string, EP_CODE: string, minSeeds: number
   return magnet;
 }
 
+export async function findMagnets(show: string, EP_CODE: string, minSeeds: number): Promise<Torrent[]> {
+  const apiUrl = `https://apibay.org/q.php?q=${encodeURIComponent(`${show} ${EP_CODE}`)}`;
+  const res = await fetch(apiUrl);
+  if (!res.ok) throw new Error(`apibay request failed: ${res.status}`);
+  const results = (await res.json()) as Torrent[];
+  if (!Array.isArray(results) || results.length === 0) {
+    throw new Error('No torrents found for this episode.');
+  }
+  const filtered = results.filter(t => t.seeders && parseInt(String(t.seeders)) >= (minSeeds || 0));
+  if (filtered.length === 0) {
+    throw new Error('No torrents found with enough seeders.');
+  }
+  const searchQuery = `${show} ${EP_CODE}`;
+  const scored = filtered.map(t => ({ ...t, score: scoreTorrent(t, searchQuery) }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
 export async function downloadTorrent(
   magnet: string,
   outputDir: string,
