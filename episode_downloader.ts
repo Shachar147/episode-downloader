@@ -20,25 +20,31 @@ const MY_NUMBER = process.env.MY_WHATSAPP_NUMBER;
 
 class EpisodeDownloader {
   show: string;
-  season: number;
-  episode: number;
+  season?: number;
+  episode?: number;
   out: string = '~/Videos/';
   minSeeds: number = 20;
-  epCode: string;
+  epCode?: string;
   episodeName: string;
+  isMovie: boolean;
 
-  constructor(show: string, season: number, episode: number, out?: string, minSeeds?: number) {
+  constructor(show: string, season?: number, episode?: number, out?: string, minSeeds?: number, isMovie?: boolean) {
     this.show = show;
     this.season = season;
     this.episode = episode;
+    this.isMovie = !!isMovie;
     if (out){
       this.out = out;
     }
     if (minSeeds) {
       this.minSeeds = minSeeds;
     }
-    this.epCode = `s${String(season).padStart(2, '0')}e${String(episode).padStart(2, '0')}`;
-    this.episodeName = `${show} ${this.epCode}`;
+    if (!this.isMovie && season !== undefined && episode !== undefined) {
+      this.epCode = `s${String(season).padStart(2, '0')}e${String(episode).padStart(2, '0')}`;
+      this.episodeName = `${show} ${this.epCode}`;
+    } else {
+      this.episodeName = show;
+    }
   }
 
   async sendMessage (message:string) {
@@ -105,15 +111,24 @@ class EpisodeDownloader {
 
   async handleVideoAndSubtitleMatching(episodeFolder: string): Promise<{video: any, subtitle: any, lang: string}> {
     await this.sendMessage('Searching for torrent candidates...');
-    const torrents = await findMagnets(this.show, this.epCode, this.minSeeds);
+    const torrents = await findMagnets(this.show, this.epCode || '', this.minSeeds);
     await this.sendMessage(`Found ${torrents.length} torrent candidates.`);
     const token = await opensubsLogin();
     await this.sendMessage('Searching for Hebrew subtitle candidates...');
-    let subtitles = await searchSubtitlesAll(token, 'he', this.show, this.season, this.episode);
+    let subtitles;
     let lang = 'he';
+    if (this.isMovie) {
+      subtitles = await searchSubtitlesAll(token, 'he', this.show, 0, 0);
+    } else {
+      subtitles = await searchSubtitlesAll(token, 'he', this.show, this.season || 0, this.episode || 0);
+    }
     if (subtitles.length === 0) {
       await this.sendMessage('No Hebrew subtitles found. Searching for English subtitles...');
-      subtitles = await searchSubtitlesAll(token, 'en', this.show, this.season, this.episode);
+      if (this.isMovie) {
+        subtitles = await searchSubtitlesAll(token, 'en', this.show, 0, 0);
+      } else {
+        subtitles = await searchSubtitlesAll(token, 'en', this.show, this.season || 0, this.episode || 0);
+      }
       lang = 'en';
       if (subtitles.length === 0) {
         await this.sendMessage('No subtitles found :(');
@@ -298,17 +313,31 @@ function listenForTelegramEpisodeRequests() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error('TELEGRAM_BOT_TOKEN is not set in environment variables');
   const bot = new TelegramBot(token, { polling: true });
-  const pattern = /^(.+?)\s+[sS](\d{2})[eE](\d{2})$/i;
+  const seriesPattern = /^(.+?)\s+[sS](\d{2})[eE](\d{2})$/i;
+  const moviePattern = /^movie:\s*(.+)$/i;
 
   bot.on('message', async (msg) => {
     if (!msg.text) return;
-    const match = msg.text.trim().match(pattern);
-    if (!match) return; // ignore messages that aren't on the right format
-    const show = match[1].trim();
-    const season = parseInt(match[2], 10);
-    const episode = parseInt(match[3], 10);
-    await bot.sendMessage(msg.chat.id, `Looking for downloads for "${show}", Season ${season}, Episode ${episode}...`);
-    const downloader = new EpisodeDownloader(show, season, episode, '/Users/shacharratzabi/Videos/');
+    const text = msg.text.trim();
+    let show, season, episode, isMovie = false;
+    let match = text.match(seriesPattern);
+    if (match) {
+      show = match[1].trim();
+      season = parseInt(match[2], 10);
+      episode = parseInt(match[3], 10);
+      await bot.sendMessage(msg.chat.id, `Looking for downloads for "${show}", Season ${season}, Episode ${episode}...`);
+    } else {
+      match = text.match(moviePattern);
+      if (match) {
+        show = match[1].trim();
+        isMovie = true;
+        await bot.sendMessage(msg.chat.id, `Looking for downloads for movie "${show}"...`);
+      } else {
+        await bot.sendMessage(msg.chat.id, 'Please send a message in the format: "Show S01E01" or "Movie: Movie Title"');
+        return;
+      }
+    }
+    const downloader = new EpisodeDownloader(show, season, episode, '/Users/shacharratzabi/Videos/', undefined, isMovie);
     await downloader.run();
   });
 }
