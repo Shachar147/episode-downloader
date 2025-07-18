@@ -68,7 +68,7 @@ export async function searchSubtitles(token: string, lang: string, show: string,
 
 export async function searchSubtitlesAll(token: string, lang: string, show: string, season: number, episode: number): Promise<SubtitleSearchResult[]> {
   const showQuery = show.toLowerCase().replace(/\s+/g, '+');
-  const query = `${showQuery}+season+${season}+episode+${episode}`;
+  const query = (!season && !episode) ? showQuery :  `${showQuery}+season+${season}+episode+${episode}`;
   const url = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(query)}&languages=${lang}`;
   console.log(`[OpenSubtitles] Searching by query: ${url}`);
   const res = await fetch(url, {
