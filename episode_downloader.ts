@@ -10,8 +10,8 @@ import { muxSubtitles } from './utils/merge-utils';
 import { compressForWhatsapp } from './utils/compress-utils';
 import { waitForWhatsAppReady, whatsappClient, sendMessage as sendMessageFunc } from './utils/whatsapp-utils';
 import { sendMessage as sendTelegramMessage } from './utils/telegram-utils';
-import { downloadTorrent, findMagnet } from './utils/torrent-utils';
-import { downloadSubtitle, opensubsLogin, searchSubtitles, translateSRTtoHebrew } from './utils/subtitles-utils';
+import { downloadTorrent, findMagnets } from './utils/torrent-utils';
+import { downloadSubtitle, opensubsLogin, searchSubtitlesAll, translateSRTtoHebrew } from './utils/subtitles-utils';
 import { formatFileName, getFileInfo } from './utils/file-utils';
 import { MESSAGE_TUNNEL, MessageTunnel } from './utils/messaging-utils';
 import TelegramBot from 'node-telegram-bot-api';
@@ -57,65 +57,6 @@ class EpisodeDownloader {
     return episodeFolder;
   }
   
-  async handleVideoDownload(episodeFolder: string): Promise<string> {
-    const videoFiles = await fs.readdir(episodeFolder).catch(() => []);
-    const existingVideo = videoFiles.find(file =>
-      /\.(mp4|mkv|avi|mov|wmv|flv)$/i.test(file) &&
-      !file.includes('.hebsub.') &&
-      !file.includes('.whatsapp.')
-    );
-    
-    let videoPath: string;
-    if (existingVideo) {
-      videoPath = path.join(episodeFolder, existingVideo || '');
-      const fileInfo = getFileInfo(videoPath);
-      await this.sendMessage(`Skipping torrent download -\nVideo file already exists:\n\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
-    } else {
-      await this.sendMessage(`Searching torrent...`);
-      const magnet = await findMagnet(this.show, this.epCode, this.minSeeds);
-      await this.sendMessage(`*Magnet link found!*`);
-      videoPath = await downloadTorrent(magnet, episodeFolder, '*Starting torrent download...*', this.episodeName);
-      const fileInfo = getFileInfo(videoPath);
-      await this.sendMessage(`Torrent download complete!\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
-    }
-    return videoPath;
-  }
-  
-  async handleSubtitles(episodeFolder: string): Promise<string> {
-    const subtitleFiles = await fs.readdir(episodeFolder).catch(() => []);
-    const existingSubtitle = subtitleFiles.find(file =>
-      /\.(srt)$/i.test(file) &&
-      (file.toLocaleLowerCase().includes('heb'))
-    );
-    
-    let subtitlePath: string;
-    if (existingSubtitle) {
-      subtitlePath = path.join(episodeFolder, existingSubtitle || '');
-      await this.sendMessage(`Skipping subtitle download - \nSubtitle file already exists: \n\n${existingSubtitle || ''}`);
-    } else {
-      const token = await opensubsLogin();
-      let subObj = await searchSubtitles(token, 'he', this.show, this.season, this.episode);
-      subtitlePath = path.join(episodeFolder, subObj && subObj.fileName ? subObj.fileName : `${this.episodeName}.heb.srt`);
-      if (subObj) {
-        await this.sendMessage(`Hebrew subtitles found!`);
-        await downloadSubtitle(subObj, subtitlePath, token);
-      } else {
-        await this.sendMessage(`Hebrew subtitles not found :(\nSearching for English subtitles...`);
-        subObj = await searchSubtitles(token, 'en', this.show, this.season, this.episode);
-        if (!subObj) {
-          await this.sendMessage(`No subtitles found :(`);
-          throw new Error('No subtitles found');
-        }
-        const engPath = path.join(episodeFolder, subObj.fileName || `${this.episodeName}.eng.srt`);
-        await this.sendMessage(`English subtitles found!`);
-        await downloadSubtitle(subObj, engPath, token);
-        await this.sendMessage(`Translating subtitles from english to Hebrew...`);
-        await translateSRTtoHebrew(engPath, subtitlePath);
-      }
-    }
-    return subtitlePath;
-  }
-  
   async handleMuxing(videoPath: string, subtitlePath: string, episodeFolder: string): Promise<string> {
     const outputVideo = path.join(episodeFolder, `${path.parse(videoPath || '').name}.hebsub.mp4`);
     if (existsSync(outputVideo)) {
@@ -149,46 +90,155 @@ class EpisodeDownloader {
     return compressedPath;
   }
 
+  // Add a function to compute name similarity
+  private nameSimilarity(a: string, b: string): number {
+    // Simple similarity: count of shared words (case-insensitive, ignoring punctuation)
+    const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(Boolean);
+    const aWords = new Set(clean(a));
+    const bWords = new Set(clean(b));
+    let shared = 0;
+    for (const word of aWords) {
+      if (bWords.has(word)) shared++;
+    }
+    return shared / Math.max(aWords.size, bWords.size, 1);
+  }
+
+  async handleVideoAndSubtitleMatching(episodeFolder: string): Promise<{video: any, subtitle: any, lang: string}> {
+    await this.sendMessage('Searching for torrent candidates...');
+    const torrents = await findMagnets(this.show, this.epCode, this.minSeeds);
+    await this.sendMessage(`Found ${torrents.length} torrent candidates.`);
+    const token = await opensubsLogin();
+    await this.sendMessage('Searching for Hebrew subtitle candidates...');
+    let subtitles = await searchSubtitlesAll(token, 'he', this.show, this.season, this.episode);
+    let lang = 'he';
+    if (subtitles.length === 0) {
+      await this.sendMessage('No Hebrew subtitles found. Searching for English subtitles...');
+      subtitles = await searchSubtitlesAll(token, 'en', this.show, this.season, this.episode);
+      lang = 'en';
+      if (subtitles.length === 0) {
+        await this.sendMessage('No subtitles found :(');
+        throw new Error('No subtitles found');
+      }
+    }
+    await this.sendMessage(`Found ${subtitles.length} subtitle candidates (${lang === 'he' ? 'Hebrew' : 'English'}).`);
+    // Find best match by name similarity
+    let bestScore = -1;
+    let bestPair: { video: any; subtitle: any } = { video: torrents[0], subtitle: subtitles[0] };
+    for (const torrent of torrents) {
+      for (const subtitle of subtitles) {
+        if (!torrent.name || !subtitle.fileName) continue;
+        const score = this.nameSimilarity(torrent.name, subtitle.fileName);
+        if (score > bestScore) {
+          bestScore = score;
+          bestPair = { video: torrent, subtitle };
+        }
+      }
+    }
+    await this.sendMessage(`Matched video and subtitle:\nVideo: ${bestPair.video.name}\nSubtitle: ${bestPair.subtitle.fileName || bestPair.subtitle.release || 'unknown'}\nSimilarity score: ${bestScore.toFixed(2)}`);
+    return { video: bestPair.video, subtitle: bestPair.subtitle, lang };
+  }
+
   async run(): Promise<void> {
     try {
       if (MESSAGE_TUNNEL === MessageTunnel.WHATSAPP) {
         await waitForWhatsAppReady();
       }
-      
       // Step 1: Setup directories
       const episodeFolder = await this.setupDirectories();
-      
-      // Step 2: Handle video download
-      const videoPath = await this.handleVideoDownload(episodeFolder);
-      
-      // Step 3: Handle subtitles
-      const subtitlePath = await this.handleSubtitles(episodeFolder);
-      
-      // Step 4: Handle muxing
-      const outputVideo = await this.handleMuxing(videoPath, subtitlePath, episodeFolder);
-      
-      // Step 5: Handle compression
-      // const compressedPath = await this.handleCompression(videoPath, outputVideo, episodeFolder);
-      
-      // Step 6: Send completion message with final file info
-      const finalFileInfo = getFileInfo(outputVideo);
+      // Step 2: Find best-matching video and subtitle
+      const { video, subtitle, lang } = await this.handleVideoAndSubtitleMatching(episodeFolder);
+      // Step 3: Download video (or use existing)
+      let videoPath: string | undefined;
+      // Check for existing video file in episodeFolder
+      const filesInFolder = await fs.readdir(episodeFolder);
+      let largest = null;
+      let largestSize = 0;
+      for (const file of filesInFolder) {
+        const ext = path.extname(file).toLowerCase();
+        if ([".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv"].includes(ext)) {
+          const filePath = path.join(episodeFolder, file);
+          const fileStat = await fs.stat(filePath);
+          if (fileStat.size > largestSize) {
+            largest = filePath;
+            largestSize = fileStat.size;
+          }
+        }
+      }
+      if (largest) {
+        videoPath = largest;
+        await this.sendMessage(`Video file already exists, skipping torrent download.\n📁 File: ${path.basename(videoPath)}\n📊 Size: ${largestSize}`);
+      } else {
+        // Download video
+        const magnet = `magnet:?xt=urn:btih:${video.info_hash}&dn=${encodeURIComponent(video.name)}&tr=udp://tracker.openbittorrent.com:80/announce`;
+        const videoPathRaw = await downloadTorrent(magnet, episodeFolder, '*Starting torrent download...*', this.episodeName);
+        videoPath = videoPathRaw;
+        const stat = await fs.stat(videoPathRaw);
+        if (stat.isDirectory()) {
+          const files = await fs.readdir(videoPathRaw);
+          let largest = null;
+          let largestSize = 0;
+          for (const file of files) {
+            const ext = path.extname(file).toLowerCase();
+            if ([".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv"].includes(ext)) {
+              const filePath = path.join(videoPathRaw, file);
+              const fileStat = await fs.stat(filePath);
+              if (fileStat.size > largestSize) {
+                largest = filePath;
+                largestSize = fileStat.size;
+              }
+            }
+          }
+          if (!largest) {
+            throw new Error('No video file found in the downloaded folder.');
+          }
+          videoPath = largest;
+        }
+        const fileInfo = getFileInfo(videoPath);
+        await this.sendMessage(`Torrent download complete!\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
+      }
+      // Step 4: Download subtitle (or use existing)
+      const token = await opensubsLogin();
+      const subtitlePath = path.join(episodeFolder, subtitle.fileName || `${this.episodeName}.${lang}.srt`);
+      try {
+        await fs.access(subtitlePath);
+        await this.sendMessage(`Subtitle file already exists, skipping subtitle download.\n📄 File: ${path.basename(subtitlePath)}`);
+      } catch {
+        // File does not exist, download it
+        await downloadSubtitle(subtitle, subtitlePath, token);
+      }
+      // Step 5: Muxing
+      if (lang === 'en') {
+        // Look for any Hebrew subtitle file in the folder
+        const files = await fs.readdir(episodeFolder);
+        let hebSubFile: string | undefined = undefined;
+        for (const file of files) {
+          const lower = file.toLowerCase();
+          if ((lower.includes('.heb.') || lower.includes('hebrew')) && (lower.endsWith('.srt') || lower.endsWith('.sub'))) {
+            hebSubFile = path.join(episodeFolder, file);
+            break;
+          }
+        }
+        if (hebSubFile) {
+          await this.sendMessage(`Hebrew subtitle already exists (${path.basename(hebSubFile)}), skipping translation.`);
+          // Use the found Hebrew subtitle file for muxing
+          await this.handleMuxing(videoPath, hebSubFile, episodeFolder);
+        } else {
+          const hebPath = path.join(episodeFolder, `${this.episodeName}.heb.srt`);
+          await this.sendMessage('Translating subtitles from English to Hebrew...');
+          await translateSRTtoHebrew(subtitlePath, hebPath);
+          // Use the translated file for muxing
+          await this.handleMuxing(videoPath, hebPath, episodeFolder);
+        }
+      } else {
+        await this.handleMuxing(videoPath, subtitlePath, episodeFolder);
+      }
+      // Step 5: Send completion message
+      const finalFileInfo = getFileInfo(videoPath);
       await this.sendMessage(`✅ All done!\n\n📁 Final file: ${formatFileName(finalFileInfo.name)}\n📊 Size: ${finalFileInfo.size}\n📂 Location: ${episodeFolder}`);
-      
-      // Step 7: Send video via WhatsApp
-      // await sendVideoViaWhatsApp(compressedPath, this.episodeName, MY_NUMBER || '');
-      
     } catch (err: any) {
       await this.sendMessage(`⛔ Error: ${err.message}`);
       await new Promise(resolve => setTimeout(resolve, 10000));
-      // process.exit(1);
     } finally {
-      // // Gracefully close WhatsApp client
-      // if (whatsappClient) {
-      //   console.log('Closing WhatsApp client...');
-      //   await whatsappClient.destroy();
-      // }
-      
-      // Add delay to ensure WhatsApp messages are delivered
       if (MESSAGE_TUNNEL === MessageTunnel.WHATSAPP) {
         console.log('Waiting 10 seconds for WhatsApp messages to be delivered...');
         await new Promise(resolve => setTimeout(resolve, 10000));
