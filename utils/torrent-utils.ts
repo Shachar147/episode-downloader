@@ -36,10 +36,65 @@ export function scoreTorrent(torrent: Torrent, searchQuery: string): number {
   return qualityScore * 1000 + parseInt(torrent.seeders ? String(torrent.seeders) : '0') / 1000;
 }
 
+// Retry helper function with exponential backoff
+async function fetchWithRetry(url: string, maxRetries: number = 3, initialDelay: number = 1000): Promise<any> {
+  let lastError: Error | null = null;
+  let lastResponse: any = null;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const res = await fetch(url);
+      
+      // If successful, return immediately
+      if (res.ok) {
+        return res;
+      }
+      
+      // For 5xx errors (like 502, 503, 504) or 429 (rate limit), retry
+      if (res.status >= 500 || res.status === 429) {
+        lastResponse = res;
+        const delay = initialDelay * Math.pow(2, attempt);
+        const chalk = await getChalk();
+        console.log(chalk.yellow(`Request failed with status ${res.status}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})...`));
+        
+        if (attempt < maxRetries - 1) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        // Last attempt, will return this response and let caller handle it
+        return res;
+      }
+      
+      // For other errors (4xx except 429), return immediately (don't retry client errors)
+      return res;
+    } catch (error: any) {
+      lastError = error;
+      const delay = initialDelay * Math.pow(2, attempt);
+      
+      if (attempt < maxRetries - 1) {
+        const chalk = await getChalk();
+        console.log(chalk.yellow(`Request failed: ${error.message}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})...`));
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+    }
+  }
+  
+  // If we have a last response (5xx error after all retries), return it
+  if (lastResponse) {
+    return lastResponse;
+  }
+  
+  // Otherwise throw the last error
+  throw lastError || new Error('Request failed after all retries');
+}
+
 export async function findMagnet(show: string, EP_CODE: string, minSeeds: number): Promise<string> {
   const apiUrl = `https://apibay.org/q.php?q=${encodeURIComponent(`${show} ${EP_CODE}`)}`;
-  const res = await fetch(apiUrl);
-  if (!res.ok) throw new Error(`apibay request failed: ${res.status}`);
+  const res = await fetchWithRetry(apiUrl);
+  if (!res.ok) {
+    throw new Error(`apibay request failed: ${res.status} ${res.statusText}. The service may be temporarily unavailable.`);
+  }
   const results = (await res.json()) as Torrent[];
   if (!Array.isArray(results) || results.length === 0) {
     throw new Error('No torrents found for this episode.');
@@ -64,8 +119,10 @@ export async function findMagnet(show: string, EP_CODE: string, minSeeds: number
 
 export async function findMagnets(show: string, EP_CODE: string, minSeeds: number): Promise<Torrent[]> {
   const apiUrl = `https://apibay.org/q.php?q=${encodeURIComponent(`${show} ${EP_CODE}`)}`;
-  const res = await fetch(apiUrl);
-  if (!res.ok) throw new Error(`apibay request failed: ${res.status}`);
+  const res = await fetchWithRetry(apiUrl);
+  if (!res.ok) {
+    throw new Error(`apibay request failed: ${res.status} ${res.statusText}. The service may be temporarily unavailable.`);
+  }
   const results = (await res.json()) as Torrent[];
   if (!Array.isArray(results) || results.length === 0) {
     throw new Error('No torrents found for this episode.');
@@ -78,6 +135,52 @@ export async function findMagnets(show: string, EP_CODE: string, minSeeds: numbe
   const scored = filtered.map(t => ({ ...t, score: scoreTorrent(t, searchQuery) }));
   scored.sort((a, b) => b.score - a.score);
   return scored;
+}
+
+export async function findMovieMagnets(movieName: string, minSeeds: number): Promise<Torrent[]> {
+  const apiUrl = `https://apibay.org/q.php?q=${encodeURIComponent(movieName)}`;
+  const res = await fetchWithRetry(apiUrl);
+  if (!res.ok) {
+    throw new Error(`apibay request failed: ${res.status} ${res.statusText}. The service may be temporarily unavailable.`);
+  }
+  const results = (await res.json()) as Torrent[];
+  if (!Array.isArray(results) || results.length === 0) {
+    throw new Error('No torrents found for this movie.');
+  }
+  const filtered = results.filter(t => t.seeders && parseInt(String(t.seeders)) >= (minSeeds || 0));
+  if (filtered.length === 0) {
+    throw new Error('No torrents found with enough seeders.');
+  }
+  const scored = filtered.map(t => ({ ...t, score: scoreTorrent(t, movieName) }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+export async function findMovieMagnet(movieName: string, minSeeds: number): Promise<string> {
+  const apiUrl = `https://apibay.org/q.php?q=${encodeURIComponent(movieName)}`;
+  const res = await fetchWithRetry(apiUrl);
+  if (!res.ok) {
+    throw new Error(`apibay request failed: ${res.status} ${res.statusText}. The service may be temporarily unavailable.`);
+  }
+  const results = (await res.json()) as Torrent[];
+  if (!Array.isArray(results) || results.length === 0) {
+    throw new Error('No torrents found for this movie.');
+  }
+  const filtered = results.filter(t => t.seeders && parseInt(String(t.seeders)) >= (minSeeds || 0));
+  if (filtered.length === 0) {
+    throw new Error('No torrents found with enough seeders.');
+  }
+  const scored = filtered.map(t => ({ ...t, score: scoreTorrent(t, movieName) }));
+  console.log('Found torrents and their scores:');
+  scored.forEach((t: Torrent) => {
+    console.log(`  Name: ${t.name}, Seeders: ${t.seeders}, Score: ${t.score.toFixed(2)}`);
+  });
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored[0];
+  const chalk = await getChalk();
+  console.log(chalk.green(`Selected torrent for download: ${top.name}`));
+  const magnet = `magnet:?xt=urn:btih:${top.info_hash}&dn=${encodeURIComponent(top.name)}&tr=udp://tracker.openbittorrent.com:80/announce`;
+  return magnet;
 }
 
 export async function downloadTorrent(

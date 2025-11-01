@@ -10,8 +10,8 @@ import { muxSubtitles } from './utils/merge-utils';
 import { compressForWhatsapp } from './utils/compress-utils';
 import { waitForWhatsAppReady, whatsappClient, sendMessage as sendMessageFunc } from './utils/whatsapp-utils';
 import { sendMessage as sendTelegramMessage } from './utils/telegram-utils';
-import { downloadTorrent, findMagnets } from './utils/torrent-utils';
-import { downloadSubtitle, opensubsLogin, searchSubtitlesAll, translateSRTtoHebrew } from './utils/subtitles-utils';
+import { downloadTorrent, findMagnets, findMovieMagnets } from './utils/torrent-utils';
+import { downloadSubtitle, opensubsLogin, searchSubtitlesAll, searchMovieSubtitlesAll, translateSRTtoHebrew } from './utils/subtitles-utils';
 import { formatFileName, getFileInfo } from './utils/file-utils';
 import { MESSAGE_TUNNEL, MessageTunnel } from './utils/messaging-utils';
 import TelegramBot from 'node-telegram-bot-api';
@@ -247,6 +247,227 @@ class EpisodeDownloader {
   }
 }
 
+class MovieDownloader {
+  movieName: string;
+  out: string = '~/Videos/';
+  minSeeds: number = 20;
+
+  constructor(movieName: string, out?: string, minSeeds?: number) {
+    this.movieName = movieName;
+    if (out){
+      this.out = out;
+    }
+    if (minSeeds) {
+      this.minSeeds = minSeeds;
+    }
+  }
+
+  async sendMessage (message:string) {
+    if (MESSAGE_TUNNEL === MessageTunnel.WHATSAPP) {
+      await sendMessageFunc(MY_NUMBER, this.movieName, message)
+    } else {
+      await sendTelegramMessage(this.movieName, message);
+    }
+  };
+  
+  async setupDirectories(): Promise<string> {
+    const outputDir = path.resolve(this.out);
+    if (!existsSync(outputDir)) await fs.mkdir(outputDir, { recursive: true });
+    const movieFolder = path.join(outputDir, this.movieName);
+    if (!existsSync(movieFolder)) await fs.mkdir(movieFolder, { recursive: true });
+    return movieFolder;
+  }
+  
+  async handleMuxing(videoPath: string, subtitlePath: string, movieFolder: string): Promise<string> {
+    const outputVideo = path.join(movieFolder, `${path.parse(videoPath || '').name}.hebsub.mp4`);
+    if (existsSync(outputVideo)) {
+      await this.sendMessage(`Skipping video & subtitles merge -\nMerged video already exists:\n\n${path.basename(outputVideo)}`);
+    } else {
+      const mergeMessage = `Merging video and subtitles...`;
+      await this.sendMessage(mergeMessage);
+      await muxSubtitles(videoPath || '', subtitlePath || '', outputVideo, mergeMessage, MY_NUMBER || '', this.movieName);
+      const fileInfo = getFileInfo(outputVideo);
+      await this.sendMessage(`Merge completed:\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
+    }
+    return outputVideo;
+  }
+  
+  async handleCompression(videoPath: string, outputVideo: string, movieFolder: string): Promise<string> {
+    const compressedPath = path.join(movieFolder, `${path.parse(videoPath || '').name}.whatsapp.mp4`);
+    if (existsSync(compressedPath)) {
+      await this.sendMessage(`Skipping compression - \nCompressed video already exists:\n\n${path.basename(compressedPath)}`);
+    } else {
+      try {
+        const compressMessage = 'Compressing video for WhatsApp...';
+        await this.sendMessage(`${compressMessage}`);
+        await compressForWhatsapp(outputVideo, compressedPath, compressMessage, this.movieName, MY_NUMBER || '');
+        const fileInfo = getFileInfo(compressedPath);
+        await this.sendMessage(`Compression completed:\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
+      } catch (err: any) {
+        await this.sendMessage(`Compression failed: ${err.message || err}`);
+        throw err;
+      }
+    }
+    return compressedPath;
+  }
+
+  // Add a function to compute name similarity
+  private nameSimilarity(a: string, b: string): number {
+    // Simple similarity: count of shared words (case-insensitive, ignoring punctuation)
+    const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(Boolean);
+    const aWords = new Set(clean(a));
+    const bWords = new Set(clean(b));
+    let shared = 0;
+    for (const word of aWords) {
+      if (bWords.has(word)) shared++;
+    }
+    return shared / Math.max(aWords.size, bWords.size, 1);
+  }
+
+  async handleVideoAndSubtitleMatching(movieFolder: string): Promise<{video: any, subtitle: any, lang: string}> {
+    await this.sendMessage('Searching for torrent candidates...');
+    const torrents = await findMovieMagnets(this.movieName, this.minSeeds);
+    await this.sendMessage(`Found ${torrents.length} torrent candidates.`);
+    const token = await opensubsLogin();
+    await this.sendMessage('Searching for Hebrew subtitle candidates...');
+    let subtitles = await searchMovieSubtitlesAll(token, 'he', this.movieName);
+    let lang = 'he';
+    if (subtitles.length === 0) {
+      await this.sendMessage('No Hebrew subtitles found. Searching for English subtitles...');
+      subtitles = await searchMovieSubtitlesAll(token, 'en', this.movieName);
+      lang = 'en';
+      if (subtitles.length === 0) {
+        await this.sendMessage('No subtitles found :(');
+        throw new Error('No subtitles found');
+      }
+    }
+    await this.sendMessage(`Found ${subtitles.length} subtitle candidates (${lang === 'he' ? 'Hebrew' : 'English'}).`);
+    // Find best match by name similarity
+    let bestScore = -1;
+    let bestPair: { video: any; subtitle: any } = { video: torrents[0], subtitle: subtitles[0] };
+    for (const torrent of torrents) {
+      for (const subtitle of subtitles) {
+        if (!torrent.name || !subtitle.fileName) continue;
+        const score = this.nameSimilarity(torrent.name, subtitle.fileName);
+        if (score > bestScore) {
+          bestScore = score;
+          bestPair = { video: torrent, subtitle };
+        }
+      }
+    }
+    await this.sendMessage(`Matched video and subtitle:\nVideo: ${bestPair.video.name}\nSubtitle: ${bestPair.subtitle.fileName || bestPair.subtitle.release || 'unknown'}\nSimilarity score: ${bestScore.toFixed(2)}`);
+    return { video: bestPair.video, subtitle: bestPair.subtitle, lang };
+  }
+
+  async run(): Promise<void> {
+    try {
+      if (MESSAGE_TUNNEL === MessageTunnel.WHATSAPP) {
+        await waitForWhatsAppReady();
+      }
+      // Step 1: Setup directories
+      const movieFolder = await this.setupDirectories();
+      // Step 2: Find best-matching video and subtitle
+      const { video, subtitle, lang } = await this.handleVideoAndSubtitleMatching(movieFolder);
+      // Step 3: Download video (or use existing)
+      let videoPath: string | undefined;
+      // Check for existing video file in movieFolder
+      const filesInFolder = await fs.readdir(movieFolder);
+      let largest = null;
+      let largestSize = 0;
+      for (const file of filesInFolder) {
+        const ext = path.extname(file).toLowerCase();
+        if ([".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv"].includes(ext)) {
+          const filePath = path.join(movieFolder, file);
+          const fileStat = await fs.stat(filePath);
+          if (fileStat.size > largestSize) {
+            largest = filePath;
+            largestSize = fileStat.size;
+          }
+        }
+      }
+      if (largest) {
+        videoPath = largest;
+        await this.sendMessage(`Video file already exists, skipping torrent download.\n📁 File: ${path.basename(videoPath)}\n📊 Size: ${largestSize}`);
+      } else {
+        // Download video
+        const magnet = `magnet:?xt=urn:btih:${video.info_hash}&dn=${encodeURIComponent(video.name)}&tr=udp://tracker.openbittorrent.com:80/announce`;
+        const videoPathRaw = await downloadTorrent(magnet, movieFolder, '*Starting torrent download...*', this.movieName);
+        videoPath = videoPathRaw;
+        const stat = await fs.stat(videoPathRaw);
+        if (stat.isDirectory()) {
+          const files = await fs.readdir(videoPathRaw);
+          let largest = null;
+          let largestSize = 0;
+          for (const file of files) {
+            const ext = path.extname(file).toLowerCase();
+            if ([".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv"].includes(ext)) {
+              const filePath = path.join(videoPathRaw, file);
+              const fileStat = await fs.stat(filePath);
+              if (fileStat.size > largestSize) {
+                largest = filePath;
+                largestSize = fileStat.size;
+              }
+            }
+          }
+          if (!largest) {
+            throw new Error('No video file found in the downloaded folder.');
+          }
+          videoPath = largest;
+        }
+        const fileInfo = getFileInfo(videoPath);
+        await this.sendMessage(`Torrent download complete!\n📁 File: ${formatFileName(fileInfo.name)}\n📊 Size: ${fileInfo.size}`);
+      }
+      // Step 4: Download subtitle (or use existing)
+      const token = await opensubsLogin();
+      const subtitlePath = path.join(movieFolder, subtitle.fileName || `${this.movieName}.${lang}.srt`);
+      try {
+        await fs.access(subtitlePath);
+        await this.sendMessage(`Subtitle file already exists, skipping subtitle download.\n📄 File: ${path.basename(subtitlePath)}`);
+      } catch {
+        // File does not exist, download it
+        await downloadSubtitle(subtitle, subtitlePath, token);
+      }
+      // Step 5: Muxing
+      if (lang === 'en') {
+        // Look for any Hebrew subtitle file in the folder
+        const files = await fs.readdir(movieFolder);
+        let hebSubFile: string | undefined = undefined;
+        for (const file of files) {
+          const lower = file.toLowerCase();
+          if ((lower.includes('.heb.') || lower.includes('hebrew')) && (lower.endsWith('.srt') || lower.endsWith('.sub'))) {
+            hebSubFile = path.join(movieFolder, file);
+            break;
+          }
+        }
+        if (hebSubFile) {
+          await this.sendMessage(`Hebrew subtitle already exists (${path.basename(hebSubFile)}), skipping translation.`);
+          // Use the found Hebrew subtitle file for muxing
+          await this.handleMuxing(videoPath, hebSubFile, movieFolder);
+        } else {
+          const hebPath = path.join(movieFolder, `${this.movieName}.heb.srt`);
+          await this.sendMessage('Translating subtitles from English to Hebrew...');
+          await translateSRTtoHebrew(subtitlePath, hebPath);
+          // Use the translated file for muxing
+          await this.handleMuxing(videoPath, hebPath, movieFolder);
+        }
+      } else {
+        await this.handleMuxing(videoPath, subtitlePath, movieFolder);
+      }
+      // Step 6: Send completion message
+      const finalFileInfo = getFileInfo(videoPath);
+      await this.sendMessage(`✅ All done!\n\n📁 Final file: ${formatFileName(finalFileInfo.name)}\n📊 Size: ${finalFileInfo.size}\n📂 Location: ${movieFolder}`);
+    } catch (err: any) {
+      await this.sendMessage(`⛔ Error: ${err.message}`);
+      await new Promise(resolve => setTimeout(resolve, 10000));
+    } finally {
+      if (MESSAGE_TUNNEL === MessageTunnel.WHATSAPP) {
+        console.log('Waiting 10 seconds for WhatsApp messages to be delivered...');
+        await new Promise(resolve => setTimeout(resolve, 10000));
+      }
+    }
+  }
+}
+
 // Graceful shutdown handler
 process.on('SIGINT', async () => {
   console.log('\nReceived SIGINT, shutting down gracefully...');
@@ -298,22 +519,40 @@ function listenForTelegramEpisodeRequests() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error('TELEGRAM_BOT_TOKEN is not set in environment variables');
   const bot = new TelegramBot(token, { polling: true });
-  const pattern = /^(.+?)\s+[sS](\d{2})[eE](\d{2})$/i;
+  const episodePattern = /^(.+?)\s+[sS](\d{2})[eE](\d{2})$/i;
+  const moviePattern = /^Movie:\s*(.+)$/i;
 
   bot.on('message', async (msg) => {
     if (!msg.text) return;
-    const match = msg.text.trim().match(pattern);
-    if (!match) return; // ignore messages that aren't on the right format
-    const show = match[1].trim();
-    const season = parseInt(match[2], 10);
-    const episode = parseInt(match[3], 10);
-    await bot.sendMessage(msg.chat.id, `Looking for downloads for "${show}", Season ${season}, Episode ${episode}...`);
-    const downloader = new EpisodeDownloader(show, season, episode, '/Users/shacharratzabi/Videos/');
-    await downloader.run();
+    const text = msg.text.trim();
+    
+    // Check for movie pattern first
+    const movieMatch = text.match(moviePattern);
+    if (movieMatch) {
+      const movieName = movieMatch[1].trim();
+      await bot.sendMessage(msg.chat.id, `Looking for downloads for movie "${movieName}"...`);
+      const downloader = new MovieDownloader(movieName, '/Users/shacharratzabi/Videos/');
+      await downloader.run();
+      return;
+    }
+    
+    // Check for episode pattern
+    const episodeMatch = text.match(episodePattern);
+    if (episodeMatch) {
+      const show = episodeMatch[1].trim();
+      const season = parseInt(episodeMatch[2], 10);
+      const episode = parseInt(episodeMatch[3], 10);
+      await bot.sendMessage(msg.chat.id, `Looking for downloads for "${show}", Season ${season}, Episode ${episode}...`);
+      const downloader = new EpisodeDownloader(show, season, episode, '/Users/shacharratzabi/Videos/');
+      await downloader.run();
+      return;
+    }
+    
+    // Ignore messages that aren't in the right format
   });
 }
 
 if (MESSAGE_TUNNEL === MessageTunnel.TELEGRAM && process.argv.length <= 2) {
-  console.log('Listening for Telegram episode requests...');
+  console.log('Listening for Telegram episode and movie requests...');
   listenForTelegramEpisodeRequests();
 }

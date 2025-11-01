@@ -35,7 +35,10 @@ export async function opensubsLogin(): Promise<string> {
     body: JSON.stringify({ username: OS_API_USER, password: OS_API_PASS })
   });
   const loginData = (await res.json()) as { token?: string };
-  if (!loginData.token) throw new Error('OpenSubtitles login failed');
+  if (!loginData.token) {
+    console.log(loginData);
+    throw new Error('OpenSubtitles login failed');
+  }
   return loginData.token;
 }
 
@@ -88,6 +91,30 @@ export async function searchSubtitlesAll(token: string, lang: string, show: stri
     }).filter(Boolean) as SubtitleSearchResult[];
   }
   console.log(`[OpenSubtitles] No subtitles found for query: ${query} (${lang})`);
+  return [];
+}
+
+export async function searchMovieSubtitlesAll(token: string, lang: string, movieName: string): Promise<SubtitleSearchResult[]> {
+  const movieQuery = movieName.toLowerCase().replace(/\s+/g, '+');
+  const url = `https://api.opensubtitles.com/api/v1/subtitles?query=${encodeURIComponent(movieQuery)}&languages=${lang}`;
+  console.log(`[OpenSubtitles] Searching for movie by query: ${url}`);
+  const res = await fetch(url, {
+    headers: {
+      'Api-Key': OPEN_SUBTITLES_API_KEY,
+      'User-Agent': OPEN_SUBTITLES_USER_AGENT,
+      Authorization: `Bearer ${token}`
+    }
+  });
+  const searchData = (await res.json()) as { data?: any[] };
+  if (searchData && Array.isArray(searchData.data) && searchData.data.length > 0) {
+    return searchData.data.map(sub => {
+      const fileId = sub.attributes.files?.[0]?.file_id;
+      const fileName = sub.attributes.files?.[0]?.file_name || undefined;
+      if (!fileId) return null;
+      return { fileId, fileName, release: sub.attributes.release };
+    }).filter(Boolean) as SubtitleSearchResult[];
+  }
+  console.log(`[OpenSubtitles] No subtitles found for movie query: ${movieQuery} (${lang})`);
   return [];
 }
 
